@@ -22,6 +22,7 @@ pub const Trailing = enum { none, reveal, accessory };
 
 pub const Options = struct {
     size: Size = .md,
+    horizontal_padding: ?f32 = null,
     /// Draws a hidden secret as circles of this size and pitch instead of
     /// bullet glyphs. The caret and hint stay at the field's font size.
     secret_dots: ?secret_input.Dots = null,
@@ -78,8 +79,9 @@ pub const Layout = struct {
 pub fn arrange(box: Rect, opts: Options, t: theme.Theme) Layout {
     const m = metrics(opts.size, t);
     var out: Layout = .{ .text = box, .font_size = m.font_size };
-    var left = box.x + m.pad;
-    var right = box.x + box.w - m.pad;
+    const pad = opts.horizontal_padding orelse m.pad;
+    var left = box.x + pad;
+    var right = box.x + box.w - pad;
     if (opts.leading_icon != null) {
         const icon_size = @min(box.h, opts.leading_icon_size orelse m.icon);
         out.icon = .{ .x = left, .y = box.y + (box.h - icon_size) / 2, .w = icon_size, .h = icon_size };

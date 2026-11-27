@@ -92,6 +92,9 @@ pub const Options = struct {
     variant: Variant = .secondary,
     size: Size = .md,
     label: []const u8 = "",
+    font_size: ?f32 = null,
+    icon_gap: ?f32 = null,
+    horizontal_padding: ?f32 = null,
     /// Paints this glyph centred instead of `label` (an icon-only button);
     /// the label stays its accessible name.
     icon: ?IconId = null,
@@ -220,6 +223,7 @@ pub fn metrics(size: Size, t: theme.Theme) Metrics {
 /// Natural size for a label `label_w` wide, for measure.zig.
 pub fn naturalSize(opts: Options, t: theme.Theme, label_w: f32) struct { w: f32, h: f32 } {
     const m = metrics(opts.size, t);
+    const pad = opts.horizontal_padding orelse m.pad_x;
     if (opts.icon != null) return .{ .w = m.height, .h = m.height };
     var scratch: [256]u8 = undefined;
     var fixed = std.heap.FixedBufferAllocator.init(&scratch);
@@ -236,16 +240,16 @@ pub fn naturalSize(opts: Options, t: theme.Theme, label_w: f32) struct { w: f32,
         }
     }
     const measured_label_w = if (parsed.storage != null)
-        paint_mod.labelWidth(parsed.label, m.font_size)
+        paint_mod.labelWidth(parsed.label, opts.font_size orelse m.font_size)
     else
         label_w;
     if (opts.stacked) {
         const icon = stackedIcon(m);
-        return .{ .w = @max(measured_label_w, icon) + m.pad_x * 2, .h = icon + stack_gap + m.font_size * 1.4 + m.pad_x };
+        return .{ .w = @max(measured_label_w, icon) + pad * 2, .h = icon + stack_gap + (opts.font_size orelse m.font_size) * 1.4 + pad };
     }
-    const leading: f32 = if (opts.leading_icon != null) m.icon + iconGap(m) else 0;
-    const trailing: f32 = if (opts.trailing_icon != null) m.icon + m.pad_x / 2 else 0;
-    return .{ .w = measured_label_w + m.pad_x * 2 + 2 + leading + trailing, .h = m.height };
+    const leading: f32 = if (opts.leading_icon != null) m.icon + (opts.icon_gap orelse iconGap(m)) else 0;
+    const trailing: f32 = if (opts.trailing_icon != null) m.icon + pad / 2 else 0;
+    return .{ .w = measured_label_w + pad * 2 + 2 + leading + trailing, .h = m.height };
 }
 
 const stack_gap: f32 = 6;
@@ -669,7 +673,7 @@ pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {
     }
     const label_style: layout.TextStyle = .{
         .content = parsed.label,
-        .font_size = m.font_size,
+        .font_size = opts.font_size orelse m.font_size,
         .weight = 600,
         .color = fg,
         .mnemonic_offset = parsed.byte_offset,
@@ -679,20 +683,22 @@ pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {
     const trailing_room: f32 = if (opts.alignment == .left and opts.trailing_icon != null) m.icon + m.pad_x + iconGap(m) else 0;
     if (opts.stacked) {
         const icon = stackedIcon(m);
-        const line = m.font_size * 1.4;
+        const line = label_style.font_size * 1.4;
         const top = box.y + (box.h - (icon + stack_gap + line)) / 2;
         if (opts.leading_icon) |id| r.drawIcon(box.x + (box.w - icon) / 2, top, icon, icon, .{ .id = id, .color = fg });
         r.drawTextCentered(box.x, top + icon + stack_gap, box.w, line, label_style);
         return;
     }
     if (opts.leading_icon) |id| {
-        // Icon and label centred as one group.
+        // Icon and label share a line.
         const label_w = r.textWidth(label_style);
-        const group = m.icon + iconGap(m) + label_w;
-        const left = box.x + (if (opts.alignment == .left) m.pad_x else @max(0, (box.w - group) / 2));
+        const gap = opts.icon_gap orelse iconGap(m);
+        const group = m.icon + gap + label_w;
+        const left = box.x + (if (opts.alignment == .left) opts.horizontal_padding orelse m.pad_x else @max(0, (box.w - group) / 2));
         r.drawIcon(left, box.y + (box.h - m.icon) / 2, m.icon, m.icon, .{ .id = id, .color = fg });
-        const tx = left + m.icon + iconGap(m);
-        r.drawText(tx, box.y, @max(0, box.x + box.w - tx - trailing_room), box.h, label_style);
+        const tx = left + m.icon + gap;
+        const right_pad = @max(trailing_room, opts.horizontal_padding orelse 0);
+        r.drawText(tx, box.y, @max(0, box.x + box.w - tx - right_pad), box.h, label_style);
     } else if (opts.alignment == .left) {
         r.drawText(box.x + m.pad_x, box.y, @max(0, box.w - m.pad_x - trailing_room), box.h, label_style);
     } else {

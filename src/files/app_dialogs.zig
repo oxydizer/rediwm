@@ -66,6 +66,7 @@ pub fn closeDialog(self: *App) void {
         if (dlg.properties) |*props| props.deinit();
         if (dlg.trash_properties) |*props| props.release(self.reaper);
         dlg.edit.text.deinit(self.allocator);
+        if (dlg.folder_selection) |selection| selection.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
         if (dlg.conflict_destination) |path| self.allocator.free(path);
@@ -421,6 +422,7 @@ pub fn confirmDialog(self: *App) void {
         .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
         .properties, .trash_properties => {},
+        .new_folder_from_selection => @import("app_folder_selection.zig").confirm(self, &dlg),
         .new_folder => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             _ = app_requests.send(self, .{ .create_folder = .{ .dir = self.history.current, .name = name } }, .create_folder);

@@ -350,7 +350,7 @@ pub fn handleLocationKey(self: *App, sym: u32, utf8: []const u8) void {
 
 pub fn activeEditor(self: *App) ?*Editor {
     if (self.dialog) |*dlg| return switch (dlg.kind) {
-        .new_folder, .new_file, .new_branch, .rename, .torrent_source, .torrent_destination => &dlg.edit,
+        .new_folder, .new_folder_from_selection, .new_file, .new_branch, .rename, .torrent_source, .torrent_destination => &dlg.edit,
         else => null,
     };
     return switch (self.focus) {

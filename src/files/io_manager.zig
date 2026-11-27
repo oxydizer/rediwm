@@ -135,6 +135,12 @@ pub const JobState = enum {
     }
 };
 
+/// Stable until the executors are quiescent and the job is retired.
+pub const GroupDestination = struct {
+    cancelled: std.atomic.Value(bool) = .init(false),
+    error_code: std.atomic.Value(u8) = .init(0),
+};
+
 pub const OperationKind = enum {
     create_directory,
     copy_file,
@@ -146,6 +152,7 @@ pub const OperationKind = enum {
     purge_source,
     archive_extract,
     archive_member_extract,
+    create_transfer_destination,
 };
 
 /// Borrowed input for registering a job-level archive extraction operation.
@@ -424,6 +431,7 @@ const Job = struct {
     /// New files are not synced one by one; the finalizer syncs the
     /// destination's filesystem once before the job completes.
     defer_sync: bool = false,
+    group_destination: ?*GroupDestination = null,
     /// A task of the job is stuck (`io_coordinator_stalls.zig`): what it runs
     /// is not using its disks, so it does not count against their limits.
     stalled: bool = false,
@@ -480,6 +488,7 @@ const Job = struct {
         while (source_path_iter.next()) |path| allocator.free(path.*);
         self.source_root_paths.deinit(allocator);
         if (self.destination_directory) |path| allocator.free(path);
+        if (self.group_destination) |state| allocator.destroy(state);
         self.discovery_schedule.deinit(allocator);
         self.skipped_subtrees.deinit(allocator);
         self.directory_permission_records.deinit(allocator);
@@ -1673,6 +1682,23 @@ pub const Manager = struct {
         job.defer_sync = true;
     }
 
+    pub fn setRenameOnly(self: *Manager, job_id: JobId) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.group_destination != null) return error.InvalidJobState;
+        const state = try self.allocator.create(GroupDestination);
+        state.* = .{};
+        job.group_destination = state;
+    }
+
+    pub fn jobRenamesOnly(self: *const Manager, job_id: JobId) bool {
+        return self.groupDestination(job_id) != null;
+    }
+
+    pub fn groupDestination(self: *const Manager, job_id: JobId) ?*GroupDestination {
+        return (self.findJobConst(job_id) orelse return null).group_destination;
+    }
+
     pub fn jobDefersSync(self: *const Manager, job_id: JobId) bool {
         const job = self.findJobConst(job_id) orelse return false;
         return job.defer_sync;
@@ -2085,7 +2111,8 @@ pub const Manager = struct {
             .other => return error.UnsupportedEntryKind,
         };
         const valid_kind = switch (entry.kind) {
-            .directory => kind == .create_directory or kind == .detach_source,
+            .directory => kind == .create_directory or kind == .detach_source or
+                (kind == .move_entry and job.group_destination != null),
             .regular_file, .symlink => kind == expected_kind or
                 kind == .move_entry or kind == .detach_source,
             .other => false,
@@ -2772,6 +2799,7 @@ pub const Manager = struct {
             return error.InvalidJobState;
         const has_running =
             job.operation_state_counts[@backingInt(OperationState.running)] != 0;
+        if (job.group_destination) |state| state.cancelled.store(true, .release);
         job.cancel_requested = has_running;
         job.pause_requested = false;
         self.cancelOutstanding(job, has_running);
@@ -3618,7 +3646,7 @@ fn updateFlushingOperationCount(
 fn isPopulationOperation(kind: OperationKind) bool {
     return switch (kind) {
         .create_directory, .copy_file, .copy_symlink, .move_entry => true,
-        .finalize_directories, .publish, .detach_source, .purge_source, .archive_extract, .archive_member_extract => false,
+        .finalize_directories, .publish, .detach_source, .purge_source, .archive_extract, .archive_member_extract, .create_transfer_destination => false,
     };
 }
 

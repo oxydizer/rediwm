@@ -2,6 +2,8 @@
 //! pool and applying what comes back (threading §8). Methods of
 //! `Coordinator`, aliased there.
 const std = @import("std");
+const io_manager = @import("io_manager.zig");
+const io_tree = @import("io_tree.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
 const io_resource_ledger = @import("io_resource_ledger.zig");
@@ -134,6 +136,93 @@ fn applyPrepared(self: *Coordinator, job_id: JobId, plan_result: *anyerror!io_tr
     const plan = if (plan_result.*) |*plan| plan else |err| return self.endPlanningJob(job_id, .failed, err);
     self.applyTransferPlan(job_id, entry.value.mode, plan) catch |err|
         return self.endPlanningJob(job_id, .failed, err);
+}
+
+/// Turns a prepared plan into the roots and operations of a planning
+/// job and queues it. Touches only the Manager. On error the job stays in
+/// `planning` for the caller to discard.
+pub fn applyTransferPlan(
+    self: *Coordinator,
+    job_id: JobId,
+    mode: io_service.TransferMode,
+    plan: *const io_transfer_plan.TransferPlan,
+) !void {
+    const manager = &self.runtime.manager;
+
+    var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
+    defer discovery_roots.deinit(self.allocator);
+    var directory_root_ids: std.ArrayList(io_tree.EntryId) = .empty;
+    defer directory_root_ids.deinit(self.allocator);
+
+    const create_destination = if (plan.create_destination) create: {
+        try manager.setRenameOnly(job_id);
+        break :create try manager.addOperation(job_id, .create_transfer_destination);
+    } else null;
+    for (plan.sources.items) |source| {
+        const root_id = try manager.addTreeRoot(
+            job_id,
+            source.destination_name,
+            source.kind,
+            source.metadata,
+            source.symlink_target,
+        );
+        if (create_destination) |mkdir| {
+            try manager.setRootSourcePath(job_id, root_id, source.path);
+            const move = try manager.addEntryOperation(job_id, root_id, .move_entry);
+            try manager.addDependency(job_id, move, mkdir);
+            continue;
+        }
+        switch (source.kind) {
+            .directory => {
+                try discovery_roots.append(self.allocator, .{
+                    .root_id = root_id,
+                    .path = source.path,
+                });
+                try directory_root_ids.append(self.allocator, root_id);
+            },
+            .regular_file, .symlink => {
+                try manager.setRootSourcePath(job_id, root_id, source.path);
+                const copy_kind: io_manager.OperationKind =
+                    if (source.kind == .regular_file) .copy_file else .copy_symlink;
+                if (mode == .move and source.same_device) {
+                    _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+                } else {
+                    _ = try manager.addEntryOperation(job_id, root_id, copy_kind);
+                    if (mode == .move)
+                        _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+                }
+            },
+            .other => unreachable,
+        }
+    }
+
+    @import("io_coordinator_disks.zig").limitDisks(self, job_id, plan);
+    try manager.setDestinationDirectory(job_id, plan.destination_path);
+    // A copy syncs once at its end; a move keeps syncing each file, since
+    // its source goes away right after (the user's choice, 2026-11-26).
+    if (mode == .copy) try manager.setDeferredSync(job_id);
+    if (mode == .move)
+        try manager.setDestinationDeviceId(job_id, plan.destination_device_id);
+
+    if (directory_root_ids.items.len == 0) {
+        try manager.queueJob(job_id);
+        return;
+    }
+
+    if (mode == .move) {
+        for (directory_root_ids.items) |root_id| {
+            _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
+            _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+        }
+        try manager.enableDiscoveredEntryMoves(job_id);
+    } else {
+        try manager.enableDiscoveredEntryOperations(job_id);
+        for (directory_root_ids.items) |root_id| {
+            _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
+        }
+    }
+    // Atomically commits the job and all discovery roots.
+    try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
 }
 
 /// A worker finished destroying a resource it held: release its entry.

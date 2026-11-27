@@ -107,7 +107,7 @@ def run(browser=False, select=False, list_view=False):
                 else:
                     for key, pressed in ((29, True), (30, True), (30, False), (29, False)):
                         ipc.action('key', {"keycode": key, "pressed": pressed})
-                x, y = box["x"] + 250, box["y"] + (178 if list_view else 158)
+                x, y = box["x"] + 250, box["y"] + (148 if list_view else 128)
                 tx, ty = dest["x"] + 250, dest["y"] + 300
                 def icon_pixels():
                     path = tmp / "drag.png"
@@ -200,7 +200,7 @@ def run_pin():
 
                 # Window coordinates: three grid cards 252 px apart, the sidebar 208 px
                 # wide with rows 32 px apart. Row n of the pins is centred at
-                # 494 + 32n, and the gap above it is at 478 + 32n.
+                # 497 + 32n, and the gap above it is at 481 + 32n.
                 def move(x, y):
                     ipc.action('move_cursor', {"x": round(box["x"] + x), "y": round(box["y"] + y)})
                 def button(pressed, code=272):
@@ -224,11 +224,11 @@ def run_pin():
                     sx = 250 + 252 * card
                     # A click on an icon opens it (single-click open): the
                     # press alone selects the card the drag carries.
-                    move(sx, 158)
+                    move(sx, 128)
                     button(True)
                     time.sleep(.1)
                     for step in range(1, 11):
-                        move(sx + (x - sx) * step / 10, 158 + (y - 158) * step / 10)
+                        move(sx + (x - sx) * step / 10, 128 + (y - 128) * step / 10)
                         time.sleep(.04)
                     time.sleep(.25)
                     if line_at is not None:
@@ -238,12 +238,12 @@ def run_pin():
 
                 names = [home / "pinned folder", home / "second folder", home / "note.txt"]
                 # A file onto the section pins it, even aimed far from the gap.
-                drag(2, 80, 270, line_at=478)
+                drag(2, 80, 270, line_at=481)
                 wait_for(lambda: pins() == [str(names[2])], "the dropped file was not pinned")
                 # Above the first pin, then between the two.
-                drag(0, 80, 270, line_at=478)
+                drag(0, 80, 270, line_at=481)
                 wait_for(lambda: pins() == [str(names[0]), str(names[2])], "folder did not land above the first pin")
-                drag(1, 80, 512, line_at=510)
+                drag(1, 80, 515, line_at=513)
                 wait_for(lambda: pins() == [str(n) for n in names], "folder did not land between the pins")
                 # Off PLACES nothing is accepted, and a listed folder is not added twice.
                 drag(0, 600, 400)
@@ -251,7 +251,7 @@ def run_pin():
                 time.sleep(.3)
                 assert pins() == [str(n) for n in names], pins()
                 # A folder pin can open a separate window without navigating this one.
-                click(80, 526, 273)
+                click(80, 529, 273)
                 for code in (108, 28):
                     ipc.action('key', {"keycode": code, "pressed": True})
                     ipc.action('key', {"keycode": code, "pressed": False})
@@ -266,10 +266,10 @@ def run_pin():
                 time.sleep(.3)
                 box = ipc.get_window_debug(win["id"])["client_box"]
                 # A click opens a folder pin.
-                click(80, 526)
+                click(80, 529)
                 wait_for(lambda: any(w["title"].startswith("second folder") for w in ipc.get_windows()), "pin did not open its folder")
                 # Removing one keeps the others in order.
-                click(80, 558, 273)
+                click(80, 561, 273)
                 time.sleep(.2)
                 for key in (108, 28):
                     ipc.action('key', {"keycode": key, "pressed": True})
@@ -336,8 +336,8 @@ def run_trash():
                 time.sleep(.6)
                 box = ipc.get_window_debug(win["id"])["client_box"]
 
-                # Window coordinates as in run_pin: Home is centred at 142,
-                # Trash at 174 (its outline's top edge at 158).
+                # Window coordinates as in run_pin: Home is centred at 145,
+                # Trash at 177 (its outline's top edge around 160).
                 def move(x, y):
                     ipc.action('move_cursor', {"x": round(box["x"] + x), "y": round(box["y"] + y)})
                 def button(pressed):
@@ -353,30 +353,30 @@ def run_trash():
                     sx = 250 + 252 * card
                     # A click on an icon opens it (single-click open): the
                     # press alone selects the card the drag carries.
-                    move(sx, 158)
+                    move(sx, 128)
                     button(True)
                     time.sleep(.1)
                     for step in range(1, 11):
-                        move(sx + (x - sx) * step / 10, 158 + (y - 158) * step / 10)
+                        move(sx + (x - sx) * step / 10, 128 + (y - 128) * step / 10)
                         time.sleep(.04)
                     time.sleep(.25)
                     if outline:
-                        wait_for(lambda: accent_at(158), "no outline on the Trash row while hovering it")
+                        wait_for(lambda: accent_at(160), "no outline on the Trash row while hovering it")
                     button(False)
                     time.sleep(.5)
                 def gio_calls():
                     return calls.read_text().splitlines() if calls.exists() else []
 
                 # Cards: keep folder, trash folder, note.txt.
-                drag(2, 80, 174, outline=True)
+                drag(2, 80, 177, outline=True)
                 wait_for(lambda: (trash / "note.txt").exists(), "the dropped file was not trashed")
                 assert not (home / "note.txt").exists()
                 assert gio_calls() == [repr(["trash", "--", str(home / "note.txt")])], gio_calls()
-                assert not accent_at(158), "the Trash outline outlived the drop"
-                drag(1, 80, 174)
+                assert not accent_at(160), "the Trash outline outlived the drop"
+                drag(1, 80, 177)
                 wait_for(lambda: (trash / "trash folder").is_dir(), "the dropped folder was not trashed")
                 # Home is not a target: nothing more is trashed.
-                drag(0, 80, 142)
+                drag(0, 80, 145)
                 time.sleep(.3)
                 assert len(gio_calls()) == 2, gio_calls()
                 assert (home / "keep folder").is_dir()
@@ -456,9 +456,9 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True, ct
                     time.sleep(.3)
                 # Folders sort first: the source file is second in a shared window.
                 sx = box["x"] + 250
-                sy = box["y"] + ((216 if same_window else 178) if list_view else (252 if same_window else 158))
+                sy = box["y"] + ((186 if same_window else 148) if list_view else (222 if same_window else 128))
                 tx = dest["x"] + 250
-                ty = dest["y"] + ((178 if list_view else 158) if folder else 350)
+                ty = dest["y"] + ((148 if list_view else 128) if folder else 350)
                 move(sx, sy)
                 button(True)
                 button(False)

@@ -152,7 +152,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     const height = animated.h;
     const window_title = toplevel.title();
     const app_id = toplevel.appId();
-    const icon_lookup = toplevel.server.iconLookup(app_id, geometry.devicePixels((chrome.Metrics{ .density = toplevel.chromeDensity() }).iconSize(), toplevel.render_scale));
+    const icon_lookup = toplevel.server.iconLookup(app_id, geometry.devicePixels(toplevel.chromeMetrics().iconSize(), toplevel.render_scale));
     const icon: ?icon_service.Entry = switch (icon_lookup) {
         .ready => |e| e,
         .pending, .missing => null,
@@ -164,6 +164,8 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     // ReleaseSafe would fill on every client commit.
     const tab_storage = if (toplevel.hasTabStrip()) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
     defer if (tab_storage) |storage| gpa.destroy(storage);
+    toplevel.chrome_width = width;
+    toplevel.chrome_height = height;
     var state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(tab_storage),
         .active = toplevel.activated,
@@ -179,8 +181,6 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         .icon = icon,
     };
     toplevel.last_painted_hover = hover;
-    toplevel.chrome_width = width;
-    toplevel.chrome_height = height;
     const insets = toplevel.controlInsets();
     state.inset_left = insets.left;
     state.inset_right = insets.right;

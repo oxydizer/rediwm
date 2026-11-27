@@ -38,7 +38,15 @@ pub fn chromeDensity(toplevel: *const Toplevel) f32 {
 }
 
 pub fn titlebarHeight(toplevel: *const Toplevel) i32 {
-    return if (toplevel.hasServerDecorations()) (chrome.Metrics{ .density = toplevel.chromeDensity() }).titlebarHeight() else 0;
+    return if (toplevel.hasServerDecorations()) toplevel.chromeMetrics().titlebarHeight() else 0;
+}
+
+pub fn chromeMetrics(toplevel: *const Toplevel) chrome.Metrics {
+    const files = toplevel.backend == .xdg and std.mem.eql(u8, toplevel.appId(), "rediwm-files");
+    return .{
+        .density = toplevel.chromeDensity(),
+        .layout = if (!files) .standard else if (toplevel.hasTabStrip()) .files_tabs else .files,
+    };
 }
 
 pub fn borderWidth(toplevel: *const Toplevel) i32 {

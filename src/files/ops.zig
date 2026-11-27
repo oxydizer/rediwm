@@ -51,7 +51,12 @@ pub fn createFolder(allocator: Allocator, dir: []const u8, name: []const u8) !vo
     const full_path = try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ dir, name }, 0);
     defer allocator.free(full_path);
 
-    if (c.mkdir(full_path, 0o755) != 0) {
+    return createFolderPath(full_path);
+}
+
+pub fn createFolderPath(path: [:0]const u8) !void {
+    io_thread_guard.blocking("ops.createFolderPath");
+    if (c.mkdir(path, 0o755) != 0) {
         return switch (std.c._errno().*) {
             c.EEXIST => error.PathAlreadyExists,
             c.EACCES => error.AccessDenied,
@@ -173,6 +178,10 @@ pub fn isDescendantOrSame(src: []const u8, dst: []const u8) bool {
     return false;
 }
 
+pub fn duplicateName(allocator: Allocator, stem: []const u8, count: usize, ext: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s} ({d}){s}", .{ stem, count, ext });
+}
+
 pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_name: []const u8) ![]u8 {
     io_thread_guard.blocking("ops.generateUniqueName");
     var path_buf: [4096]u8 = undefined;
@@ -195,7 +204,7 @@ pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_n
 
     var count: usize = 1;
     while (count < 10000) : (count += 1) {
-        const candidate = try std.fmt.allocPrint(allocator, "{s} ({d}){s}", .{ stem, count, ext });
+        const candidate = try duplicateName(allocator, stem, count, ext);
         const cand_z = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dest_dir, candidate }, 0) catch {
             allocator.free(candidate);
             return error.PathTooLong;
