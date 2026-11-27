@@ -164,18 +164,24 @@ test "local and external cuts into the selected folder move items and clear the 
     }
 }
 
-test "paste into a folder symlink rejects a source containing its target" {
+test "directory copy and move reject an aliased descendant destination" {
     var temp_buffer: [256]u8 = undefined;
     const temp = try support.makeTempDir(&temp_buffer);
     defer ops.deleteRecursive(allocator, temp) catch {};
-    const source = try support.join(allocator, temp, "source");
-    defer allocator.free(source);
-    const child = try support.join(allocator, source, "child");
-    defer allocator.free(child);
-    const destination = try support.join(allocator, temp, "link");
-    defer allocator.free(destination);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const parent = try support.join(a, temp, "parent");
+    const source = try support.join(a, parent, "source");
+    const child = try support.join(a, source, "child");
+    const parent_alias = try support.join(a, temp, "parent-alias");
+    const source_alias = try support.join(a, parent_alias, "source");
+    const destination = try support.join(a, temp, "destination-alias");
+    const unwanted = try support.join(a, child, "source");
+    try support.makeDirectory(parent);
     try support.makeDirectory(source);
     try support.makeDirectory(child);
+    try support.makeSymlink(parent, parent_alias);
     try support.makeSymlink(child, destination);
 
     var s: ServiceApp = .{};
@@ -184,12 +190,126 @@ test "paste into a folder symlink rejects a source containing its target" {
     try s.app.history.navigate(temp);
     try selectedDirectory(&s.app, destination);
     s.app.items.items[0].is_symlink = true;
-    try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, source));
+    try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_alias));
+
+    for ([_]bool{ false, true }) |cut| {
+        s.app.clipboard_cut = cut;
+        const folder = try requestFolderPaste(&s.app);
+        defer allocator.free(folder);
+        s.app.executePasteLocal(folder);
+        try s.until(idle);
+        try std.testing.expectEqualStrings("Cannot drop a folder into itself", s.app.status_notice.?);
+        try std.testing.expectEqualStrings(source_alias, s.app.clipboard_paths.items[0]);
+        try std.testing.expectEqual(cut, s.app.clipboard_cut);
+        try std.testing.expect(support.pathExists(source));
+        try std.testing.expect(!support.pathExists(unwanted));
+    }
+}
+
+test "paste through an aliased source parent duplicates copies and preserves cuts" {
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const parent = try support.join(a, temp, "parent");
+    const destination = try support.join(a, temp, "parent-alias");
+    const source = try support.join(a, parent, "file.txt");
+    const source_spelling = try std.fmt.allocPrint(a, "{s}//./file.txt", .{parent});
+    const duplicate = try support.join(a, parent, "file (1).txt");
+    const unexpected_copy = try support.join(a, parent, "file (2).txt");
+    try support.makeDirectory(parent);
+    try support.makeSymlink(parent, destination);
+    try support.writeFile(source, "original");
+
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+    try s.app.history.navigate(temp);
+    try selectedDirectory(&s.app, destination);
+    s.app.items.items[0].is_symlink = true;
+    try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_spelling));
 
     const folder = try requestFolderPaste(&s.app);
     defer allocator.free(folder);
     s.app.executePasteLocal(folder);
     try s.until(idle);
-    try std.testing.expectEqualStrings("Cannot drop a folder into itself", s.app.status_notice.?);
-    try std.testing.expectEqualStrings(source, s.app.clipboard_paths.items[0]);
+    try support.waitForContents(source, "original");
+    try support.waitForContents(duplicate, "original");
+
+    s.app.clipboard_cut = true;
+    s.app.executePasteLocal(folder);
+    try s.until(idle);
+    try std.testing.expectEqualStrings("The items are already here", s.app.status_notice.?);
+    try support.waitForContents(source, "original");
+    try std.testing.expect(!support.pathExists(unexpected_copy));
+    try std.testing.expectEqualStrings(source_spelling, s.app.clipboard_paths.items[0]);
+    try std.testing.expect(s.app.clipboard_cut);
+}
+
+test "paste accepts an unrelated directory alias and copies symlink entries literally" {
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = try support.join(a, temp, "source");
+    const destination = try support.join(a, temp, "destination");
+    const parent_alias = try support.join(a, temp, "parent-alias");
+    const source_alias = try support.join(a, parent_alias, "source");
+    const alias = try support.join(a, source, "alias");
+    const link = try support.join(a, temp, "dangling-link");
+    const link_spelling = try std.fmt.allocPrint(a, "{s}/", .{link});
+    const copied_dir = try support.join(a, destination, "source");
+    const copied_link = try support.join(a, destination, "dangling-link");
+    const move_source = try support.join(a, temp, "move-source");
+    const move_alias = try support.join(a, parent_alias, "move-source");
+    const moved = try support.join(a, destination, "move-source");
+    const moved_file = try support.join(a, moved, "contents.txt");
+    const contents = try support.join(a, move_source, "contents.txt");
+    const move_link = try support.join(a, temp, "move-link");
+    const move_link_alias = try support.join(a, parent_alias, "move-link");
+    const moved_link = try support.join(a, destination, "move-link");
+    try support.makeDirectory(source);
+    try support.makeDirectory(destination);
+    try support.makeSymlink(destination, alias);
+    try support.makeSymlink(temp, parent_alias);
+    try support.makeSymlink("missing-target", link);
+
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+    try s.app.history.navigate(source);
+    try selectedDirectory(&s.app, alias);
+    s.app.items.items[0].is_symlink = true;
+    for ([_][]const u8{ source_alias, link_spelling }) |path|
+        try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, path));
+
+    const folder = try requestFolderPaste(&s.app);
+    defer allocator.free(folder);
+    s.app.executePasteLocal(folder);
+    try s.until(idle);
+    try std.testing.expectEqualStrings("Items copied", s.app.status_notice.?);
+    try std.testing.expect(support.pathExists(copied_dir));
+    const link_target = try support.readLink(a, copied_link);
+    try std.testing.expectEqualStrings("missing-target", link_target);
+    try support.makeDirectory(move_source);
+    try support.writeFile(contents, "moved");
+    try support.makeSymlink("missing-target", move_link);
+    s.app.clearClipboard();
+    s.app.clipboard_cut = true;
+    for ([_][]const u8{ move_alias, move_link_alias }) |path|
+        try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, path));
+
+    s.app.executePasteLocal(folder);
+    try s.until(idle);
+    try std.testing.expectEqualStrings("Items moved", s.app.status_notice.?);
+    try support.waitForContents(moved_file, "moved");
+    try std.testing.expect(!support.pathExists(move_source));
+    try std.testing.expect(!support.pathExists(move_link));
+    try std.testing.expectEqualStrings("missing-target", try support.readLink(a, moved_link));
+    try std.testing.expectEqual(@as(usize, 0), s.app.clipboard_paths.items.len);
+    try std.testing.expectEqualStrings(source, s.app.history.current);
 }
