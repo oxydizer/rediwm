@@ -497,10 +497,11 @@ fn prepare(
                 details.entry_id,
             );
             defer context.allocator.free(source);
-            break :blk try io_move.makeInput(
+            break :blk try io_move.makeInputWithPolicy(
                 context.allocator,
                 source,
                 destination,
+                context.manager.jobRenamesOnly(token.job_id),
             );
         },
         else => return error.UnsupportedOperation,

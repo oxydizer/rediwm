@@ -25,6 +25,7 @@ pub const Transfer = struct {
     sources: [][]u8,
     /// The cut clipboard this move came from, if any.
     cut_revision: ?usize,
+    folder_navigation: ?u32 = null,
     /// The conflict at the head of the queue for this job, from its record.
     pending_conflict: u64 = 0,
 
@@ -74,6 +75,14 @@ pub const List = struct {
 /// Submits a copy or move of `paths` into `directory`. The service checks
 /// the sources and the destination; the job's record reports the end.
 pub fn submitTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
+    return submit(self, kind, paths, directory, clipboard, null);
+}
+
+pub fn submitFolderMove(self: *App, paths: []const []const u8, directory: []const u8, navigation: u32) bool {
+    return submit(self, .move, paths, directory, false, navigation);
+}
+
+fn submit(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool, folder_navigation: ?u32) bool {
     const link = &self.service;
     const list = &link.transfers;
     const handle = link.handle orelse return false;
@@ -98,6 +107,7 @@ pub fn submitTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u
         },
     };
     defer command.deinitPayload();
+    command.payload.?.data.transfer.create_destination = folder_navigation != null;
     link.outbox.send(handle, &command) catch |err| {
         std.log.warn("Files transfer not submitted: {s}", .{@errorName(err)});
         freeAll(self.allocator, sources);
@@ -107,6 +117,7 @@ pub fn submitTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u
     };
     list.items[list.len] = .{
         .tag = link.next_tag,
+        .folder_navigation = folder_navigation,
         .move = move,
         .destination = destination,
         .sources = sources,
@@ -212,6 +223,11 @@ fn finish(self: *App, transfer: *Transfer, record: io_service.JobRecord) void {
     {
         dropClipboardPaths(self, transfer.sources);
     }
+    if (transfer.folder_navigation) |navigation| {
+        if (record.state == .completed and self.navigation_count == navigation and self.dialog == null) {
+            if (@import("app_folder_selection.zig").enterFolder(self, transfer.destination)) return;
+        }
+    }
     if (showsAffected(self, transfer)) self.refresh();
 }
 
@@ -221,6 +237,9 @@ fn rejection(code: u8) ?[]const u8 {
     const Code = io_coordinator.RejectionCode;
     return switch (std.enums.fromInt(Code, code) orelse return null) {
         .destination_inside_source => tr("Cannot drop a folder into itself"),
+        .atomic_rename_unavailable => tr("Moving items without replacing existing names is unavailable"),
+        .folder_exists => tr("Folder already exists"),
+        .folder_create_failed => tr("Failed to create folder"),
         .invalid_destination => tr("The destination folder is unavailable"),
         .invalid_source, .unsupported_source => tr("Some items cannot be transferred"),
         .nothing_to_transfer => tr("The items are already here"),

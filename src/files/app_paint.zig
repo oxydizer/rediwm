@@ -700,7 +700,7 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         setSource(cr, t.fg);
         if (dw >= 420) drawText(cr, tr("Enter confirms · Esc cancels"), dx + 16, dy + 102, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("OK"), true, 1);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, if (dlg.kind == .new_folder_from_selection) tr("Create") else tr("OK"), true, 1);
         self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
     }
 }

@@ -623,6 +623,7 @@ pub const Coordinator = struct {
         var directory_root_ids: std.ArrayList(io_tree.EntryId) = .empty;
         defer directory_root_ids.deinit(self.allocator);
 
+        if (plan.create_destination) try manager.setRenameOnly(job_id);
         for (plan.sources.items) |source| {
             const root_id = try manager.addTreeRoot(
                 job_id,
@@ -631,6 +632,11 @@ pub const Coordinator = struct {
                 source.metadata,
                 source.symlink_target,
             );
+            if (plan.create_destination) {
+                try manager.setRootSourcePath(job_id, root_id, source.path);
+                _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+                continue;
+            }
             switch (source.kind) {
                 .directory => {
                     try discovery_roots.append(self.allocator, .{

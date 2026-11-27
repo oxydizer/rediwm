@@ -28,6 +28,7 @@ pub const TransferPlan = struct {
     allocator: std.mem.Allocator,
     destination_path: []const u8,
     destination_device_id: u64,
+    create_destination: bool = false,
     sources: std.ArrayList(SourcePlan) = .empty,
 
     pub fn deinit(self: *TransferPlan) void {
@@ -60,7 +61,14 @@ pub fn prepare(
     if (!validAbsolutePath(request.destination_path))
         return error.InvalidTransferDestination;
 
-    const destination_z = try allocator.dupeSentinel(u8, request.destination_path, 0);
+    const parent = std.fs.path.dirname(request.destination_path) orelse "/";
+    const folder_name = std.fs.path.basename(request.destination_path);
+    if (request.create_destination) {
+        try ops_mod.validateFilename(folder_name);
+        if (request.mode != .move) return error.InvalidTransferDestination;
+        if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.AtomicRenameUnavailable;
+    }
+    const destination_z = try allocator.dupeSentinel(u8, if (request.create_destination) parent else request.destination_path, 0);
     defer allocator.free(destination_z);
     var destination_stat: c.struct_stat = undefined;
     if (c.stat(destination_z, &destination_stat) != 0 or
@@ -72,12 +80,18 @@ pub fn prepare(
     var plan: TransferPlan = .{
         .allocator = allocator,
         .destination_path = request.destination_path,
+        .create_destination = request.create_destination,
         .destination_device_id = @intCast(destination_stat.st_dev),
     };
     errdefer plan.deinit();
 
     for (request.sources, 0..) |source, index| {
         if (!validAbsolutePath(source.path)) return error.InvalidTransferSource;
+        if (request.create_destination) {
+            const source_parent = std.fs.path.dirname(source.path) orelse return error.InvalidTransferSource;
+            if (!std.mem.eql(u8, std.mem.trimEnd(u8, source_parent, "/"), std.mem.trimEnd(u8, parent, "/")))
+                return error.InvalidTransferSource;
+        }
         const name = std.fs.path.basename(source.path);
         if (name.len == 0) return error.InvalidTransferSource;
 
@@ -174,6 +188,7 @@ pub fn prepare(
     }
 
     if (plan.sources.items.len == 0) return error.TransferSourceEqualsDestination;
+    if (request.create_destination) try ops_mod.createFolder(allocator, parent, folder_name);
     return plan;
 }
 

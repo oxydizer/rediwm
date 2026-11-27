@@ -424,6 +424,7 @@ const Job = struct {
     /// New files are not synced one by one; the finalizer syncs the
     /// destination's filesystem once before the job completes.
     defer_sync: bool = false,
+    rename_only: bool = false,
     /// A task of the job is stuck (`io_coordinator_stalls.zig`): what it runs
     /// is not using its disks, so it does not count against their limits.
     stalled: bool = false,
@@ -1673,6 +1674,17 @@ pub const Manager = struct {
         job.defer_sync = true;
     }
 
+    pub fn setRenameOnly(self: *Manager, job_id: JobId) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        job.rename_only = true;
+    }
+
+    pub fn jobRenamesOnly(self: *const Manager, job_id: JobId) bool {
+        const job = self.findJobConst(job_id) orelse return false;
+        return job.rename_only;
+    }
+
     pub fn jobDefersSync(self: *const Manager, job_id: JobId) bool {
         const job = self.findJobConst(job_id) orelse return false;
         return job.defer_sync;
@@ -2085,7 +2097,8 @@ pub const Manager = struct {
             .other => return error.UnsupportedEntryKind,
         };
         const valid_kind = switch (entry.kind) {
-            .directory => kind == .create_directory or kind == .detach_source,
+            .directory => kind == .create_directory or kind == .detach_source or
+                (kind == .move_entry and job.rename_only),
             .regular_file, .symlink => kind == expected_kind or
                 kind == .move_entry or kind == .detach_source,
             .other => false,

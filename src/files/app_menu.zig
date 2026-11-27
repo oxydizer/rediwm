@@ -100,6 +100,8 @@ pub fn isContextMenu(self: *App) bool {
 }
 
 pub fn menuWidth(self: *App) f64 {
+    if (self.menu == .file and @import("app_folder_selection.zig").eligible(self))
+        return 300;
     return if (self.isContextMenu()) context_menu.width else 220;
 }
 
@@ -254,6 +256,17 @@ pub fn selectedAppImage(self: *App) ?[]const u8 {
 }
 
 pub fn fileActions(self: *App) []const FileAction {
+    const actions = baseFileActions(self);
+    if (!@import("app_folder_selection.zig").eligible(self)) return actions;
+    const index = std.mem.indexOfScalar(FileAction, actions, .rename) orelse return actions;
+    const split = index + 1;
+    @memcpy(self.file_menu_actions[0..split], actions[0..split]);
+    self.file_menu_actions[split] = .new_folder_from_selection;
+    @memcpy(self.file_menu_actions[split + 1 .. actions.len + 1], actions[split..]);
+    return self.file_menu_actions[0 .. actions.len + 1];
+}
+
+fn baseFileActions(self: *App) []const FileAction {
     var has_actionable_selection = false;
     var only_transfers = true;
     for (self.items.items) |item| {
@@ -472,6 +485,7 @@ pub fn runMenu(self: *App, row: usize) void {
             .copy => self.copySelected(),
             .paste => self.paste_requested = true,
             .rename => self.openRenameDialog(),
+            .new_folder_from_selection => @import("app_folder_selection.zig").openDialog(self),
             .trash, .delete_permanently => self.openTrashConfirmDialog(),
             .restore => self.restoreSelected(),
             .size => self.calculateSizeSelected(),

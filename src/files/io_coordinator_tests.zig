@@ -587,3 +587,119 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     gate.release();
     try window_view.waitState(1, .cancelled);
 }
+
+test "group move refuses existing destination and moves a mixed selection into a fresh one" {
+    if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+    const file = try join(allocator, temp, "Trip 1.jpg");
+    defer allocator.free(file);
+    defer cleanup(file, false);
+    const dir = try join(allocator, temp, "Trip 2");
+    defer allocator.free(dir);
+    defer cleanup(dir, true);
+    const child = try join(allocator, dir, "readme");
+    defer allocator.free(child);
+    defer cleanup(child, false);
+    const destination = try join(allocator, temp, "Trip");
+    defer allocator.free(destination);
+    defer cleanup(destination, true);
+    const moved_file = try join(allocator, destination, "Trip 1.jpg");
+    defer allocator.free(moved_file);
+    defer cleanup(moved_file, false);
+    const moved_dir = try join(allocator, destination, "Trip 2");
+    defer allocator.free(moved_dir);
+    defer cleanup(moved_dir, true);
+    const moved_child = try join(allocator, moved_dir, "readme");
+    defer allocator.free(moved_child);
+    defer cleanup(moved_child, false);
+
+    try writeFile(file, "photo");
+    try makeDirectory(dir);
+    try writeFile(child, "notes");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, std.testing.io, &service);
+    var window = try service.registerWindow();
+    defer window.close();
+    defer coordinator.deinit();
+    var view = support.View.init(window, &service);
+
+    const Terminal = struct {
+        tag: u64,
+        pub fn matches(self: @This(), record: io_service.JobRecord) bool {
+            return record.submit_tag == self.tag and record.state.isTerminal();
+        }
+    };
+    try makeDirectory(destination);
+    for ([_]u64{ 1, 2 }) |tag| {
+        var command: io_service.Command = .{
+            .kind = .submit_job,
+            .submit_tag = tag,
+            .payload = try io_service.OwnedPayload.createTransfer(allocator, .move, destination, &.{ file, dir }),
+        };
+        defer command.deinitPayload();
+        command.payload.?.data.transfer.create_destination = true;
+        try sendOwned(window, &command);
+        const record = try view.waitFor(Terminal{ .tag = tag });
+        if (tag == 1) {
+            try std.testing.expectEqual(io_service.JobState.failed, record.state);
+            try std.testing.expectEqual(@backingInt(io_coordinator.RejectionCode.folder_exists), record.error_code);
+            try std.testing.expect(pathExists(file) and pathExists(child));
+            cleanup(destination, true);
+        } else {
+            try std.testing.expectEqual(io_service.JobState.completed, record.state);
+            try std.testing.expect(!pathExists(file) and !pathExists(dir));
+            try waitForContents(moved_file, "photo");
+            try waitForContents(moved_child, "notes");
+        }
+    }
+}
+
+test "group move collision preserves both entries and any already moved sibling" {
+    if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+    const destination = try join(allocator, temp, "group");
+    defer allocator.free(destination);
+    try makeDirectory(destination);
+    defer cleanup(destination, true);
+    const first_target = try join(allocator, destination, "first");
+    defer allocator.free(first_target);
+    defer cleanup(first_target, false);
+    const move = @import("io_move.zig");
+    for ([_][]const u8{ "first", "second" }, 0..) |name, index| {
+        const source = try join(allocator, temp, name);
+        defer allocator.free(source);
+        defer cleanup(source, false);
+        const target = try join(allocator, destination, name);
+        defer allocator.free(target);
+        defer if (index == 1) cleanup(target, false);
+        try writeFile(source, "original");
+        if (index == 1) try writeFile(target, "arrived first");
+
+        var completion = move.execute(allocator, .{
+            .token = .{ .job_id = 1, .operation_id = @intCast(index + 1), .generation = 1 },
+            .operation_kind = .move_entry,
+            .input = try move.makeInputWithPolicy(allocator, source, target, true),
+        });
+        defer completion.deinit();
+        if (index == 0) {
+            try std.testing.expectEqual(io_manager.WorkResult.completed, completion.outcome);
+            try std.testing.expect(!pathExists(source));
+            try waitForContents(target, "original");
+        } else {
+            try std.testing.expectEqual(io_manager.WorkResult.failed, completion.outcome);
+            try waitForContents(source, "original");
+            try waitForContents(target, "arrived first");
+            try waitForContents(first_target, "original");
+        }
+    }
+}

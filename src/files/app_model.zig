@@ -51,6 +51,7 @@ pub const FileAction = enum {
     copy,
     paste,
     rename,
+    new_folder_from_selection,
     trash,
     /// In the Trash: put the entry back, or remove it for good.
     restore,
@@ -68,6 +69,7 @@ pub const FileAction = enum {
             .copy => tr("Copy"),
             .paste => tr("Paste"),
             .rename => tr("Rename"),
+            .new_folder_from_selection => tr("New Folder from Selection…"),
             .trash => tr("Move to Trash"),
             .restore => tr("Restore"),
             .delete_permanently => tr("Delete Permanently"),
@@ -80,7 +82,7 @@ pub const FileAction = enum {
             .open => .chevron_right,
             .open_with => .grid,
             .add_application => .plus,
-            .extract, .extract_to => .folder,
+            .extract, .extract_to, .new_folder_from_selection => .folder,
             .cut => .cut,
             .copy => .copy,
             .paste => .paste,
@@ -264,6 +266,7 @@ pub const DialogKind = enum {
     /// Closing the last window while service jobs run (`app_quit.zig`).
     quit_jobs,
     new_folder,
+    new_folder_from_selection,
     new_file,
     new_branch,
     rename,
@@ -279,6 +282,7 @@ pub const Dialog = struct {
     edit: Editor = .{},
     title: []const u8,
     target_path: ?[]u8 = null,
+    folder_selection: ?@import("app_folder_selection.zig").Selection = null,
     conflict_name: ?[]u8 = null,
     manager_conflict_id: ?u64 = null,
     /// The conflict belongs to a service job (`app_transfers.zig`).

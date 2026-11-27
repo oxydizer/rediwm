@@ -9,6 +9,7 @@ const c = @import("c.zig").api;
 const executor = @import("io_executor.zig");
 const platform_fs = @import("platform").fs;
 
+const rename_only_tag: u8 = 1;
 const collision_tag: u8 = 1;
 const cross_device_tag: u8 = 3;
 
@@ -19,6 +20,7 @@ fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
 }
 
 const Paths = struct {
+    rename_only: bool,
     source: [*:0]const u8,
     destination: [*:0]const u8,
 };
@@ -29,6 +31,10 @@ pub fn makeInput(
     source_path: []const u8,
     destination_path: []const u8,
 ) !executor.OwnedPayload {
+    return makeInputWithPolicy(allocator, source_path, destination_path, false);
+}
+
+pub fn makeInputWithPolicy(allocator: Allocator, source_path: []const u8, destination_path: []const u8, rename_only: bool) !executor.OwnedPayload {
     if (source_path.len == 0 or destination_path.len == 0)
         return error.InvalidPath;
     if (source_path[0] != '/' or destination_path[0] != '/')
@@ -39,21 +45,25 @@ pub fn makeInput(
         return error.InvalidPath;
     }
 
+    const prefix: usize = @intFromBool(rename_only);
     const bytes = try allocator.alloc(
         u8,
-        source_path.len + 1 + destination_path.len + 1,
+        prefix + source_path.len + 1 + destination_path.len + 1,
     );
     errdefer allocator.free(bytes);
-    @memcpy(bytes[0..source_path.len], source_path);
-    bytes[source_path.len] = 0;
-    const destination_start = source_path.len + 1;
+    if (rename_only) bytes[0] = rename_only_tag;
+    @memcpy(bytes[prefix..][0..source_path.len], source_path);
+    bytes[prefix + source_path.len] = 0;
+    const destination_start = prefix + source_path.len + 1;
     @memcpy(bytes[destination_start..][0..destination_path.len], destination_path);
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn parsePaths(input: *const executor.OwnedPayload) !Paths {
-    const bytes = input.slice();
+    const payload = input.slice();
+    const rename_only = payload.len != 0 and payload[0] == rename_only_tag;
+    const bytes = payload[@intFromBool(rename_only)..];
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse
         return error.InvalidInput;
     if (separator == 0 or bytes.len <= separator + 2 or
@@ -70,6 +80,7 @@ fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     }
 
     return .{
+        .rename_only = rename_only,
         .source = @ptrCast(bytes.ptr),
         .destination = @ptrCast(bytes[separator + 1 ..].ptr),
     };
@@ -102,8 +113,16 @@ pub fn execute(
     }
 
     const source_mode = source_stat.st_mode & c.S_IFMT;
-    if (source_mode != c.S_IFREG and source_mode != c.S_IFLNK) {
+    if (source_mode != c.S_IFREG and source_mode != c.S_IFLNK and
+        !(paths.rename_only and source_mode == c.S_IFDIR))
+    {
         return completion(item, .failed, null);
+    }
+
+    if (paths.rename_only) {
+        platform_fs.renameNoReplaceAtomic(paths.source, paths.destination) catch
+            return completion(item, .failed, null);
+        return completion(item, .completed, null);
     }
 
     platform_fs.renameNoReplace(paths.source, paths.destination) catch |err| {

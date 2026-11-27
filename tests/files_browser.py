@@ -334,6 +334,39 @@ fi
             action('close_window', {'id': selected_win['id']})
             print('Verified file-path startup selection.')
 
+            # Group two files through the keyboard context menu.
+            group_source = tmp / 'group-source'
+            group_source.mkdir()
+            for name in ('Trip - 01.txt', 'Trip - 02.txt'):
+                (group_source / name).write_text(name)
+            wait_for(check_closed, 'File-path window did not close')
+            start('rediwm-files', [str(group_source)], WAYLAND_DISPLAY=display)
+            group_win = wait_for(find_window, 'Grouping window did not appear')
+            action('focus_window', {'id': group_win['id']})
+            time.sleep(.4)
+            send_key(30, modifiers=[29])  # Ctrl+A
+            send_key(68, modifiers=[42])  # Shift+F10
+            for _ in range(3):
+                send_key(103)  # Wrap past Properties and Move to Trash.
+            send_key(28)  # Open New Folder from Selection.
+            send_key(28)  # Create with the suggested name.
+
+            def group_title(name):
+                return (find_window() or {}).get('title') == f'{name} — RediWM Files'
+
+            wait_for(lambda: group_title('Trip'), 'Grouping did not enter the new folder')
+            for name in ('Trip - 01.txt', 'Trip - 02.txt'):
+                assert (group_source / 'Trip' / name).read_text() == name
+                assert not (group_source / name).exists()
+            send_key(105, modifiers=[56])  # Back.
+            wait_for(lambda: group_title(group_source.name), 'Grouping did not preserve Back')
+            time.sleep(.3)
+            send_key(28)  # The new folder is selected in the parent.
+            wait_for(lambda: group_title('Trip'), 'Back did not select the new folder')
+            action('close_window', {'id': group_win['id']})
+            wait_for(check_closed, 'Grouping window did not close')
+            print('Verified grouping into a suggested folder and Back selection.')
+
             if env.get('REDIWM_FORCE_DBUS') == '1':
                 opened_marker.unlink()
                 subprocess.run(['busctl', '--user', 'call', 'org.freedesktop.FileManager1',

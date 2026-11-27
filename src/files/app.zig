@@ -208,6 +208,7 @@ pub const App = struct {
     menu_selected: usize = 0,
     /// Set when a file menu opens in the Trash: whether Restore applies.
     trash_restorable: bool = false,
+    file_menu_actions: [@typeInfo(app_model.FileAction).@"enum".field_names.len]app_model.FileAction = undefined,
     file_menu_labels: [12][]const u8 = undefined,
     menu_label_text: [9][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
