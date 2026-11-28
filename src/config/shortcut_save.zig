@@ -600,6 +600,102 @@ fn writeConfig(a: std.mem.Allocator, io: std.Io, path: []const u8, result: []con
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
 }
 
+test "factory close window slots follow desktop mode defaults" {
+    const a = std.testing.allocator;
+    const alt = try keys.parseKeybind("Alt+F4");
+    const alt_chord = keys.pack(alt.modifiers, alt.sym);
+
+    const cases = .{
+        .{ loader.DesktopMode.classic, "Super+q" },
+        .{ loader.DesktopMode.canvas, "Super+q" },
+        .{ loader.DesktopMode.tiling, "Super+c" },
+        .{ loader.DesktopMode.scrolling, "Super+c" },
+    };
+
+    inline for (cases) |case| {
+        const mode = case[0];
+        var cfg = try factoryConfig(a, mode);
+        defer cfg.deinit();
+
+        const primary = try keys.parseKeybind(case[1]);
+        const primary_chord = keys.pack(primary.modifiers, primary.sym);
+        const assigned = slots.resolve(
+            cfg.activeKeybinds(),
+            cfg.activeKeybinds(),
+            .close_window,
+            cfg.storedShortcutSlots(.close_window),
+        );
+
+        try std.testing.expectEqual(primary_chord, assigned.primary.?);
+        try std.testing.expectEqual(alt_chord, assigned.alternate.?);
+        try std.testing.expect(slots.owns(
+            cfg.activeKeybinds(), .close_window, primary_chord,
+        ));
+        try std.testing.expect(slots.owns(
+            cfg.activeKeybinds(), .close_window, alt_chord,
+        ));
+    }
+}
+
+test "reset cannot steal Alt+F4 from a custom command in any desktop mode" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "custom_command demo"
+        \\[keybinds.workspace]
+        \\"Super+c" = "close_window"
+        \\"Alt+F4" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo keep"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", ""]
+        \\"custom_command demo" = ["Alt+F4", ""]
+        \\[shortcut_slots.workspace]
+        \\"close_window" = ["Super+c", ""]
+        \\"custom_command demo" = ["Alt+F4", ""]
+        \\
+    ;
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data = original,
+    });
+
+    var cfg = try loader.parse(a, original, path);
+    defer cfg.deinit();
+
+    for ([_]loader.DesktopMode{
+        .classic, .canvas, .tiling, .scrolling,
+    }) |mode| {
+        cfg.compositor.desktop_mode = mode;
+
+        for ([_]?keys.Action{ .close_window, null }) |target| {
+            try std.testing.expectError(
+                error.ShortcutConflict,
+                saveReset(
+                    a, io, path, cfg.activeKeybinds(), mode, target,
+                ),
+            );
+
+            const actual = try std.Io.Dir.cwd().readFileAlloc(
+                io, path, a, .limited(1 << 20),
+            );
+            defer a.free(actual);
+            try std.testing.expectEqualStrings(original, actual);
+        }
+    }
+}
+
 test "custom command editing preserves slots and deletion removes them in both modes" {
     const a = std.testing.allocator;
     const io = std.testing.io;
