@@ -304,8 +304,8 @@ pub fn drawPackPlaceIcon(self: *App, cr: *c.cairo_t, index: usize, y: f64, alpha
         .device => return false,
     };
     const size = 24 * self.scale;
-    const entry = icons.getPack(self.theme_cfg, self.io, name, size) orelse
-        (if (index >= places_start and std.mem.startsWith(u8, name, "folder-")) icons.getPack(self.theme_cfg, self.io, "folder", size) else null) orelse return false;
+    const entry = icons.get(self.theme_cfg, self.io, name, size) orelse
+        (if (index >= places_start and std.mem.startsWith(u8, name, "folder-")) icons.get(self.theme_cfg, self.io, "folder", size) else null) orelse return false;
     const surface = c.cairo_image_surface_create_for_data(@ptrCast(@constCast(entry.pixels.ptr)), c.CAIRO_FORMAT_ARGB32, entry.size, entry.size, entry.size * 4) orelse return false;
     defer c.cairo_surface_destroy(surface);
     c.cairo_save(cr);
