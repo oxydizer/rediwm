@@ -1,3 +1,22 @@
+const std = @import("std");
+
+pub const canvas_layout_presets = [_]struct { key: []const u8, name: []const u8 }{
+    .{ .key = "F1", .name = "home" },
+    .{ .key = "F2", .name = "work" },
+    .{ .key = "F3", .name = "comms" },
+};
+
+fn canvasLayoutBindings() []const u8 {
+    comptime {
+        var lines: []const u8 = "";
+        for (canvas_layout_presets) |preset|
+            lines = lines ++ std.fmt.comptimePrint("\"super+{s}\"          = \"save_layout {s}\"\n", .{ preset.key, preset.name });
+        for (canvas_layout_presets) |preset|
+            lines = lines ++ std.fmt.comptimePrint("\"ctrl+super+{s}\"     = \"restore_layout {s}\"\n", .{ preset.key, preset.name });
+        return lines;
+    }
+}
+
 // Documented default written to $XDG_CONFIG_HOME/rediwm/config.toml on first run.
 pub const source =
     \\# ~/.config/rediwm/config.toml
@@ -468,12 +487,7 @@ pub const source =
     \\"print"             = "screenshot_output"
     \\
     \\# Canvas bookmarks
-    \\"super+F1"          = "save_layout home"
-    \\"super+F2"          = "save_layout work"
-    \\"super+F3"          = "save_layout comms"
-    \\"ctrl+super+F1"     = "restore_layout home"
-    \\"ctrl+super+F2"     = "restore_layout work"
-    \\"ctrl+super+F3"     = "restore_layout comms"
+++ "\n" ++ canvasLayoutBindings() ++
     \\
     \\# Undo last spatial action (move, resize, zoom, pan, or focus)
     \\"super+z"           = "undo"

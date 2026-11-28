@@ -29,6 +29,10 @@ pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []c
         }
     } else {
         for (0..5) |n| try result.append(a, .{ .set_depth = @intCast(n) });
+        for (config.default.canvas_layout_presets) |preset| {
+            try result.append(a, .{ .save_layout = preset.name });
+            try result.append(a, .{ .restore_layout = preset.name });
+        }
     }
     for (command_ids) |id| try result.append(a, .{ .custom_command = id });
     for (binds) |bind| {
@@ -108,6 +112,41 @@ test "catalogue order and action identities survive binding removal and reorder"
     try std.testing.expect(applicable(.{ .set_depth = 0 }, .canvas));
     try std.testing.expect(!applicable(.{ .set_depth = 0 }, .workspaces));
     try std.testing.expect(applicable(.{ .workspace = 1 }, .workspaces));
+}
+
+test "factory layout actions survive unassignment and keep their Canvas order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const canvas = try actions(a, .canvas, &.{}, &.{});
+    var saved: std.ArrayList([]const u8) = .empty;
+    var restored: std.ArrayList([]const u8) = .empty;
+    for (canvas) |action| switch (action) {
+        .save_layout => |name| try saved.append(a, name),
+        .restore_layout => |name| try restored.append(a, name),
+        else => {},
+    };
+    const names = [_][]const u8{ "comms", "home", "work" };
+    try std.testing.expectEqual(names.len, saved.items.len);
+    try std.testing.expectEqual(names.len, restored.items.len);
+    for (names, saved.items, restored.items) |name, save, restore| {
+        try std.testing.expectEqualStrings(name, save);
+        try std.testing.expectEqualStrings(name, restore);
+    }
+
+    const workspaces = try actions(a, .workspaces, &.{}, &.{});
+    for (workspaces) |action| try std.testing.expect(action != .save_layout and action != .restore_layout);
+
+    const key = (try keys.parseKeybind("Super+F1")).sym;
+    const configured = [_]keys.Keybind{
+        .{ .sym = key, .action = .{ .save_layout = "home" } },
+        .{ .sym = key, .action = .{ .restore_layout = "personal" } },
+    };
+    const joined = try actions(a, .canvas, &configured, &.{});
+    const reordered = try actions(a, .canvas, &.{ configured[1], configured[0] }, &.{});
+    try std.testing.expectEqual(canvas.len + 1, joined.len);
+    try std.testing.expectEqual(joined.len, reordered.len);
+    for (joined, reordered) |x, y| try std.testing.expect(keys.actionEql(x, y));
 }
 
 pub fn group(action: keys.Action) usize {

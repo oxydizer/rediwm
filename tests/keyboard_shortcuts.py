@@ -17,6 +17,8 @@ def run():
         if workspace_mode:
             original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
             original += '"Super+c" = "noop"\n'
+        else:
+            original += '"Super+F1" = "save_layout home"\n"Super+Ctrl+F1" = "restore_layout home"\n'
         custom = '"Alt+F11" = "spawn printf hello" # keep custom command'
         original += custom + "\n"
         env = {"DBUS_SESSION_BUS_ADDRESS": "", "HOME": str(tmp), "REDIWM_SHORTCUT_TEST": "two words"}
@@ -212,6 +214,16 @@ def run():
                 saved = (tmp / "rediwm-config.toml").read_text()
                 assert ('"Super+q" = "noop"' in saved) if workspace_mode else ('"Super+q"' not in saved)
                 assert '"Super+F12"' not in saved
+                if not workspace_mode:
+                    find_shortcut("layout: home")
+                    click("Unassign shortcut", beside="Super+F1")
+                    click("Unassign shortcut", beside="Super+Ctrl+F1")
+                    assert has("Save layout: home") and has("Restore layout: home")
+                    assert sum(w["label"] == "Not assigned" for w in widgets()) == 2
+                    assert "save_layout home" not in mode_bindings().values()
+                    assert "restore_layout home" not in mode_bindings().values()
+                    click("Clear shortcut search")
+                    saved = config_path.read_text()
                 chord("q")
                 assert ipc.get_shell_state()["control_center"] is not None
             stop_process(process)
@@ -221,6 +233,23 @@ def run():
                 ipc.action("open_control_center")
                 time.sleep(.3)
                 click("Keyboard Shortcuts")
+                if not workspace_mode:
+                    find_shortcut("layout: home")
+                    assert has("Save layout: home") and has("Restore layout: home")
+                    assert sum(w["label"] == "Not assigned" for w in widgets()) == 2
+                    for label, key, action in (
+                        ("Save layout: home", "F1", "save_layout home"),
+                        ("Restore layout: home", "F4", "restore_layout home"),
+                    ):
+                        click("Not assigned", beside=label)
+                        chord(key)
+                        time.sleep(.15)
+                        assert has(f"Super+{key}"), label
+                        click("Save shortcut")
+                        assert mode_bindings()[f"Super+{key}"] == action
+                    chord("F1")
+                    assert (tmp / "layouts/home.toml").is_file()
+                    click("Clear shortcut search")
                 assert has("Close Window")
                 click("Not assigned", beside="Close Window")
                 chord("F12")
