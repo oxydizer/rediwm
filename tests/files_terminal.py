@@ -404,7 +404,7 @@ def ui_tests(tmp, home, env):
             key(62)
             state = tmp / 'state/rediwm/files-view'
             wait_for(lambda: state.exists(), 'drawer height saved')
-            assert state.read_bytes()[0:1] == b'4'
+            assert state.read_bytes()[0:1] == b'5'
             # Hidden drawer is idle. Check all Files and shell threads together.
             time.sleep(.8)
             before = task_switches(first.pid) + task_switches(shell)

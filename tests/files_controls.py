@@ -501,7 +501,7 @@ def run():
                 title("Documents")  # Unpin does not navigate or delete the folder.
                 assert (home / "Documents").is_dir()
                 saved = (tmp / "state/rediwm/files-view").read_bytes()
-                assert len(saved) == 10 and saved[0] == ord("4") and saved[3] & 2 and saved[4] == 1, saved
+                assert len(saved) == 11 and saved[0] == ord("5") and saved[3] & 2 and saved[4] == 1, saved
                 click(70, 305)  # Downloads now occupies Documents' old row.
                 title("Downloads")
                 click(70, 140, 273)  # Home has Open, Open in New Window and Properties.
