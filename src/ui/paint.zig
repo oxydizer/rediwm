@@ -148,6 +148,8 @@ pub const Renderer = struct {
     scale: f32 = 1,
     /// Current window modifier state, supplied by the application input host.
     alt_pressed: bool = false,
+    /// Enable caret glide and glyph reveal when the host repaints the animation.
+    animate_text_caret: bool = false,
     clip: ?ClipRect = null,
     // Repaint bounds must not change text layout or scroll-container geometry.
     damage_clip: ?ClipRect = null,

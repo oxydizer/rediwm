@@ -531,6 +531,7 @@ pub const App = struct {
         defer ui.input.active_dispatcher = null;
         if (cairo.Layer.begin(cr, .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) })) |value| {
             var layer = value;
+            layer.renderer.animate_text_caret = true;
             ui.paint.paint(&self.root, &layer.renderer);
             layer.finish();
         }
