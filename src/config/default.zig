@@ -432,6 +432,7 @@ pub const source =
     \\
     \\# Window management
     \\"super+q"           = "close_window"
+    \\"Alt+F4"            = "close_window"
     \\"super+f"           = "toggle_fullscreen"
     \\"super+m"           = "toggle_maximize"
     \\# Canvas <-> last tiled mode; the workspace preset keeps this key too

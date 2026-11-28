@@ -3,6 +3,7 @@ pub const source =
     \\[keybinds]
     \\"Super+q" = "spawn default-terminal"
     \\"Super+c" = "close_window"
+    \\"Alt+F4" = "close_window"
     \\"Super+e" = "spawn default-file-manager"
     \\"Super+r" = "toggle_start_menu"
     \\"Super+space" = "toggle_start_menu"
