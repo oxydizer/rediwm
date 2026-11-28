@@ -113,8 +113,15 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     }
 
     if (self.menu != null) {
-        const count = self.menuLabels().len;
-        if (sym == c.XKB_KEY_Escape) self.menu = null else if (sym == c.XKB_KEY_Down) self.menu_selected = (self.menu_selected + 1) % count else if (sym == c.XKB_KEY_Up) self.menu_selected = (self.menu_selected + count - 1) % count else if (sym == c.XKB_KEY_Return) self.runMenu(self.menu_selected);
+        const count = self.validatedMenuCount();
+        if (count == 0) return;
+        switch (sym) {
+            c.XKB_KEY_Escape => self.dismissMenu(),
+            c.XKB_KEY_Down => self.menu_selected = (self.menu_selected + 1) % count,
+            c.XKB_KEY_Up => self.menu_selected = (self.menu_selected + count - 1) % count,
+            c.XKB_KEY_Return => self.runMenu(self.menu_selected),
+            else => {},
+        }
         self.invalidate();
         return;
     }

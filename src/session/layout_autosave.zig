@@ -38,7 +38,7 @@ pub const Autosave = struct {
             };
             const manager = &server.world.workspaces;
             if (self.workspace_restore) |*restore| if (restore.parsed.value.mode) |mode| if (!manager.active) {
-                manager.last_tiled = if (mode == .scrolling) .scrolling else .workspaces;
+                manager.last_tiled = if (mode == .scrolling) .scrolling else .tiling;
             };
         }
         if (server.world.workspaces.active) self.entered();

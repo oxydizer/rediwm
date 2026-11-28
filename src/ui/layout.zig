@@ -159,7 +159,7 @@ pub const IconId = enum {
     /// Firewall: a shield with a check mark.
     shield,
     /// The taskbar's desktop mode item: overlapping windows (Canvas), a
-    /// master-and-stack split (Workspaces) and columns running on (Scrolling).
+    /// master-and-stack split (Tiling) and columns running on (Scrolling).
     desktop_canvas,
     desktop_tiles,
     desktop_scroll,

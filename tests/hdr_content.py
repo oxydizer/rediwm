@@ -125,8 +125,20 @@ def probe(tmp, ipc, env, name, live, effective_white):
             for desc in ("gamma", "srgb", "linear", "pq", "unset"):
                 command(desc, desc)
                 ipc.wait_for_frame(output=name)
+                colors = ipc.query("get_window_debug", {"id": window["id"]})["surface_colors"]
+                transfer = {"gamma": "gamma22", "srgb": "srgb", "linear": "ext_linear",
+                            "pq": "st2084_pq", "unset": None}[desc]
+                primaries = {"pq": "bt2020", "unset": None}.get(desc, "srgb")
+                assert len(colors) == 1 and colors[0]["root"], colors
+                assert (colors[0]["transfer"], colors[0]["primaries"]) == (transfer, primaries), colors
                 check_bars(ipc, out, desc, white)
             print(f"PASS: {name} hdr={mode}, PQ signal={hdr}, white={white}, preferred description and five raw/SDR bars")
+        command("pq-child", "pq-child")
+        ipc.wait_for_frame(output=name)
+        colors = ipc.query("get_window_debug", {"id": window["id"]})["surface_colors"]
+        assert [(c["root"], c["transfer"], c["primaries"]) for c in colors] == [
+            (True, None, None), (False, "st2084_pq", "bt2020")], colors
+        check_bars(ipc, out, "pq", white)
     finally:
         if client.poll() is None:
             client.stdin.write("exit\n")
@@ -149,6 +161,8 @@ if __name__ == "__main__":
                 probe(tmp, ipc, os.environ, args.live_output, True, args.effective_white)
         else:
             s = Session(tmp, scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
+                        # The fullscreen, untagged pattern can bypass the pass this test measures.
+                        env_extra={"WLR_SCENE_DISABLE_DIRECT_SCANOUT": "1"},
                         config='[compositor]\nxwayland = false\n[animations]\nenabled = false\n')
             try:
                 probe(tmp, s.ipc, s.env, "HEADLESS-1", False, None)

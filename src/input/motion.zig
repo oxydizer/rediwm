@@ -234,6 +234,15 @@ fn updateWidgetProximity(input: *Input) void {
 }
 
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
+    processMotion(input, time_msec, input.server.config.compositor.focus_follows_mouse);
+}
+
+/// Restore pointer focus and the cursor after an overlay releases input.
+pub fn refreshPointer(input: *Input) void {
+    processMotion(input, 0, false);
+}
+
+fn processMotion(input: *Input, time_msec: u32, focus_follows_mouse: bool) void {
     if (input.server.locker != null or input.server.polkit_dialog != null) return;
     if (input.server.world.overview.active()) {
         input.server.world.overview.motion(&input.server.world, input.cursor.x, input.cursor.y);
@@ -270,14 +279,14 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
         return;
     }
     switch (input.cursor_mode) {
-        .passthrough => input.passthroughMotion(time_msec),
+        .passthrough => passthroughMotion(input, time_msec, focus_follows_mouse),
         .move => input.processMove(),
         .resize => input.processResize(),
         .pan => {}, // handled in cursorMotion / cursorMotionAbsolute
     }
 }
 
-pub fn passthroughMotion(input: *Input, time_msec: u32) void {
+fn passthroughMotion(input: *Input, time_msec: u32, focus_follows_mouse: bool) void {
     if (input.tab_drag) |toplevel| {
         const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
         const dragging = toplevel.tabMotion(local.x, local.y);
@@ -470,7 +479,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
         .chrome => |hit_chrome| {
             input.clearTaskbarHover();
             const toplevel = hit_chrome.toplevel;
-            if (input.server.config.compositor.focus_follows_mouse) {
+            if (focus_follows_mouse) {
                 input.server.world.focus(toplevel);
             }
             const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
@@ -539,7 +548,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
             input.setHover(res.toplevel, null);
-            if (input.server.config.compositor.focus_follows_mouse) {
+            if (focus_follows_mouse) {
                 input.server.world.focusSurface(res.toplevel, res.surface);
             }
             // Clear any compositor resize/menu cursor before a new client enter.
@@ -683,8 +692,8 @@ pub fn processResize(input: *Input) void {
         session.latest_desired_size = desired;
         session.dirty = true;
         changed = true;
-        @import("../effects/window_move.zig").resizeMotion(toplevel);
     }
+    @import("../effects/window_move.zig").resizeMotion(toplevel, cursor_world);
 
     if (session.peer) |*peer| {
         const next_size = peer_desired.?;

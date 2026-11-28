@@ -138,7 +138,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     for (&s.groups, 0..) |*card, g| {
         var rows: std.ArrayList(W) = .empty;
         if (g == 0) {
-            try rows.append(a, text(if (cc.server.world.workspaces.active) i18n.tr("Workspaces · Hyprland-style preset") else i18n.tr("Canvas · RediWM preset"), false));
+            try rows.append(a, text(if (cc.server.world.workspaces.active) i18n.tr("Tiling and Scrolling · Hyprland-style preset") else i18n.tr("Classic and Canvas · RediWM preset"), false));
             if (cc.server.world.workspaces.active) try rows.append(a, text(i18n.tr("Super+Q opens Terminal; Super+M opens Power. Arrows focus; numbers switch workspaces."), true));
         }
         try rows.append(a, .{ .kind = .{ .row = .{ .owner = cc, .id = g, .on_click = collapse } }, .height = .{ .fixed = 40 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 12, .@"align" = .center, .children = try children(a, &.{
@@ -283,7 +283,7 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .power_profile_cycle => i18n.tr("Switch to the next power profile."),
         .input_source_next => i18n.tr("Switch to the next keyboard layout or input method."),
         .input_source_prev => i18n.tr("Switch to the previous keyboard layout or input method."),
-        .toggle_desktop_mode => i18n.tr("Switch between Canvas and Workspaces."),
+        .toggle_desktop_mode => i18n.tr("Switch between the last stacking and tiled modes."),
         .quit => i18n.tr("Log out of the desktop session."),
         .poweroff, .poweroff_auto => i18n.tr("Shut down the computer."),
         .reboot, .reboot_auto => i18n.tr("Restart the computer."),

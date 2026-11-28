@@ -324,11 +324,15 @@ pub fn applySnapshot(self: *App, snap: *worker_mod.Snapshot) void {
     self.revalidateFolderSizes();
     self.rebuildView();
     self.transfer_rows_dirty = false;
-    if (self.restore_view) self.restoreView();
+    if (self.restore_view) {
+        if (self.menu == .file) self.dismissMenu();
+        self.restoreView();
+    }
     if (self.initial_selection) |path| {
         self.initial_selection = null;
         for (self.items.items, 0..) |*item, i| {
             if (!std.mem.eql(u8, item.path, path)) continue;
+            if (self.menu == .file) self.dismissMenu();
             item.selected = true;
             self.focused_index = i;
             self.selection_anchor = i;
@@ -341,6 +345,7 @@ pub fn applySnapshot(self: *App, snap: *worker_mod.Snapshot) void {
         defer self.allocator.free(path);
         for (self.items.items, 0..) |item, i| {
             if (!item.is_dir or item.missing or !std.mem.eql(u8, item.path, path)) continue;
+            if (self.menu == .file) self.dismissMenu();
             for (self.items.items, 0..) |*row, index| row.selected = index == i;
             self.focus = .file_view;
             self.focused_index = i;
@@ -428,6 +433,15 @@ pub fn ordered(order_by: Order, a: ViewItem, b: ViewItem) bool {
     return if (mode == .name_desc) order == .gt else order == .lt;
 }
 
+fn oldItem(items: []const ViewItem, index: ?usize) ?*const ViewItem {
+    const i = index orelse return null;
+    return if (i < items.len) &items[i] else null;
+}
+
+fn sameEntry(a: ViewItem, b: ViewItem) bool {
+    return std.mem.eql(u8, a.path, b.path) and std.meta.eql(a.entry_key, b.entry_key);
+}
+
 pub fn rebuildView(self: *App) void {
     const torrent = torrent_browse.active(self);
     // A torrent's rows need no listing; a window opened straight into one
@@ -447,14 +461,19 @@ pub fn rebuildView(self: *App) void {
     defer old_arena.deinit();
     var old_items = self.items;
     defer old_items.deinit(self.allocator);
-    const old_focus = if (self.focused_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
-    const old_anchor = if (self.selection_anchor) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
-    const old_click = if (self.last_click_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
+    const old_focus = oldItem(old_items.items, self.focused_index);
+    const old_anchor = oldItem(old_items.items, self.selection_anchor);
+    const old_click = oldItem(old_items.items, self.last_click_index);
+    const file_menu_open = self.menu == .file;
+    var old_selection_count: usize = 0;
     var selected_paths = std.StringHashMap(ViewItem).init(self.allocator);
     defer selected_paths.deinit();
     for (old_items.items) |item| {
+        if (file_menu_open and item.selected) old_selection_count += 1;
         if (item.selected or item.selection_fill.alpha > 0 or item.selection_border.alpha > 0) selected_paths.put(item.path, item) catch {};
     }
+    var new_selection_count: usize = 0;
+    var menu_targets_changed = false;
     self.items_arena = std.heap.ArenaAllocator.init(self.allocator);
     const mem = self.items_arena.allocator();
     self.items = .empty;
@@ -469,7 +488,9 @@ pub fn rebuildView(self: *App) void {
             const snap = snap_opt.?;
             for (if (self.changedOnly()) snap.changed else snap.items) |it| {
             if (!self.matches(it)) continue;
-            const previous = selected_paths.get(it.path);
+            const previous = if (selected_paths.get(it.path)) |item| prev: {
+                break :prev if (std.meta.eql(item.entry_key, it.entry_key)) item else null;
+            } else null;
             const selected = if (previous) |item| item.selected else false;
             var bytes = it.bytes;
             if (it.is_dir and !it.is_symlink) {
@@ -488,6 +509,7 @@ pub fn rebuildView(self: *App) void {
                 .is_dir = it.is_dir,
                 .is_symlink = it.is_symlink,
                 .is_broken = it.is_broken,
+                .entry_key = it.entry_key,
                 .directory_key = it.directory_key,
                 .git_status = it.git_status,
                 .git_lines = it.git_lines,
@@ -527,17 +549,31 @@ pub fn rebuildView(self: *App) void {
         };
         std.mem.sort(ViewItem, self.items.items, Order{ .mode = self.effectiveSort(), .folders_first = self.folders_first }, ordered);
         for (self.items.items, 0..) |item, i| {
-            if (old_focus) |path| {
-                if (std.mem.eql(u8, path, item.path)) self.focused_index = i;
+            if (old_focus) |previous| {
+                if (sameEntry(previous.*, item)) self.focused_index = i;
             }
-            if (old_anchor) |path| {
-                if (std.mem.eql(u8, path, item.path)) self.selection_anchor = i;
+            if (old_anchor) |previous| {
+                if (sameEntry(previous.*, item)) self.selection_anchor = i;
             }
-            if (old_click) |path| {
-                if (std.mem.eql(u8, path, item.path)) self.last_click_index = i;
+            if (old_click) |previous| {
+                if (sameEntry(previous.*, item)) self.last_click_index = i;
+            }
+            if (file_menu_open and item.selected) {
+                new_selection_count += 1;
+                const previous = selected_paths.get(item.path) orelse {
+                    menu_targets_changed = true;
+                    continue;
+                };
+                if (!previous.selected or !sameEntry(previous, item) or
+                    previous.missing != item.missing or previous.transfer_stub != item.transfer_stub or
+                    previous.transfer_ghost != item.transfer_ghost)
+                    menu_targets_changed = true;
             }
         }
     }
+    if (file_menu_open and (menu_targets_changed or old_selection_count != new_selection_count or
+        (old_focus != null and self.focused_index == null))) self.dismissMenu();
+    _ = self.validatedMenuCount();
     self.clampScroll();
     self.invalidate();
 }

@@ -56,7 +56,7 @@ pub fn cursorHoldEnd(listener: *wl.Listener(*wlr.Pointer.event.HoldEnd), event: 
 
 /// Camera changes cannot invalidate an in-flight client or compositor grab.
 pub fn canZoom(input: *Input) bool {
-    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
+    if (input.server.world.workspaces.mode != .canvas or input.server.world.overview.active()) return false;
     if (input.server.world.mini_map.dragging) return false;
     if (input.active_buttons != 0 or input.resize_session != null or input.seat.pointerHasGrab()) return false;
     if (input.server.world.pinching) return false;
@@ -72,14 +72,14 @@ pub fn clientSurfaceHit(hit: scene_data.Hit) bool {
 }
 
 pub fn compositorOwnsPinch(input: *Input) bool {
-    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
+    if (input.server.world.workspaces.mode != .canvas or input.server.world.overview.active()) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode == .move or input.cursor_mode == .resize or input.resize_session != null) return false;
     return !clientSurfaceHit(scene_data.hitTest(input.server, input.cursor.x, input.cursor.y));
 }
 
 pub fn compositorOwnsSwipe(input: *Input, fingers: u32) bool {
-    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
+    if (input.server.world.workspaces.mode != .canvas or input.server.world.overview.active()) return false;
     if (fingers != 2) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode != .passthrough or input.resize_session != null) return false;

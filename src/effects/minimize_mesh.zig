@@ -9,10 +9,7 @@ pub fn mesh(source: Box, target: ribbon.Point, progress: f32, preset: ribbon.Pre
     var result: ribbon.Geometry = .{};
     if (p >= 1) return result;
     result.mesh.edge = 2;
-    result.mesh.color = preset.color;
-    result.mesh.color[3] *= preset.opacity;
-    result.mesh.core_color = preset.core_color;
-    result.mesh.core_color[3] *= preset.opacity;
+    result.mesh.setColors(preset);
     const above = target.y < source.y + source.height / 2;
     result.mesh.fade = .{ p, if (above) 1 else 0 };
     const rows: usize = switch (preset.quality) {

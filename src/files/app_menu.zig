@@ -86,11 +86,13 @@ pub fn runHeader(self: *App, action: header.Action) void {
 }
 
 pub fn menuRowHeight(self: *App) usize {
+    const count = self.menuLabels().len;
+    if (count == 0) return 0;
     if (self.isContextMenu()) {
         // Keep all actions reachable at the client's minimum height.
         const available: usize = @intCast(@max(0, self.h - 8));
         const spacing = 2 * self.menuPadding() + self.menuSeparatorSpace();
-        return @min(context_menu.row_height, (available -| spacing) / self.menuLabels().len);
+        return @min(context_menu.row_height, (available -| spacing) / count);
     }
     return if (self.menu == .sort) 24 else 30;
 }
@@ -132,13 +134,17 @@ pub fn menuSeparatorSpace(self: *App) usize {
 }
 
 pub fn menuHeight(self: *App) f64 {
-    return @floatFromInt(self.menuLabels().len * self.menuRowHeight() +
+    const count = self.menuLabels().len;
+    if (count == 0) return 0;
+    return @floatFromInt(count * self.menuRowHeight() +
         2 * self.menuPadding() + self.menuSeparatorSpace());
 }
 
 // Painting and hit testing share the row geometry, including separator gaps.
 pub fn menuRowRect(self: *App, row: usize) header.Rect {
-    var offset = self.menuPadding() + row * self.menuRowHeight();
+    const row_height = self.menuRowHeight();
+    if (row_height == 0) return .{ .x = self.menu_x, .y = self.menu_y, .w = 0, .h = 0 };
+    var offset = self.menuPadding() + row * row_height;
     for (0..row + 1) |i| {
         if (self.menuSeparatorBefore(i)) offset += 7;
     }
@@ -147,7 +153,7 @@ pub fn menuRowRect(self: *App, row: usize) header.Rect {
         .x = self.menu_x + pad,
         .y = self.menu_y + @as(f64, @floatFromInt(offset)),
         .w = self.menuWidth() - 2 * pad,
-        .h = @floatFromInt(self.menuRowHeight()),
+        .h = @floatFromInt(row_height),
     };
 }
 
@@ -326,7 +332,9 @@ fn baseFileActions(self: *App) []const FileAction {
 
 pub fn placeActions(self: *App) []const PlaceAction {
     const new_window = self.chooser == null;
-    return switch (self.rowKind(self.menu_place)) {
+    const row = self.rowKind(self.menu_place);
+    if ((self.menu == .device and row != .device) or (self.menu == .sidebar and row == .device)) return &.{};
+    return switch (row) {
         .builtin => |index| switch (index) {
             1 => if (new_window) &.{ .open, .open_window, .empty_trash, .properties } else &.{ .open, .empty_trash, .properties },
             2 => if (new_window) &.{ .open, .open_window } else &.{.open},
@@ -372,7 +380,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .trash => &.{ i18n.msg("Empty Trash…"), i18n.msg("Restore All"), i18n.msg("Refresh") },
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
-        .chooser_filter => return self.chooser_filter_labels.items,
+        .chooser_filter => return if (self.chooser != null) self.chooser_filter_labels.items else &.{},
         .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
@@ -380,10 +388,19 @@ pub fn menuLabels(self: *App) []const []const u8 {
 }
 
 pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
-    if (kind == .file and self.fileActions().len == 0) return;
-    self.menu_run_first = kind == .file and self.selectedExecutable() != null;
     self.menu = kind;
-    if (kind == .file) self.refreshTrashRestorable();
+    self.menu_run_first = kind == .file and self.selectedExecutable() != null;
+    self.opened_file_action_count = null;
+    if (self.menuLabels().len == 0) {
+        self.dismissMenu();
+        return;
+    }
+    if (kind == .file) {
+        const actions = self.fileActions();
+        @memcpy(self.opened_file_actions[0..actions.len], actions);
+        self.opened_file_action_count = actions.len;
+        self.refreshTrashRestorable();
+    }
     const height = self.menuHeight();
     self.menu_x = std.math.clamp(x, 4, @max(4, @as(f64, @floatFromInt(self.w)) - self.menuWidth() - 4));
     self.menu_y = std.math.clamp(y, 4, @max(4, @as(f64, @floatFromInt(self.h)) - height - 4));
@@ -392,33 +409,61 @@ pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
     self.invalidate();
 }
 
+pub fn dismissMenu(self: *App) void {
+    if (self.menu == null) return;
+    self.menu = null;
+    self.menu_selected = 0;
+    self.opened_file_action_count = null;
+    // A full repaint covers the old bounds even when the rows have vanished.
+    self.invalidate();
+}
+
+pub fn validatedMenuCount(self: *App) usize {
+    const kind = self.menu orelse return 0;
+    const count = if (kind == .file) file: {
+        const actions = self.fileActions();
+        if (self.opened_file_action_count) |opened_count| {
+            if (!std.mem.eql(FileAction, self.opened_file_actions[0..opened_count], actions)) {
+                self.dismissMenu();
+                return 0;
+            }
+        }
+        break :file actions.len;
+    } else self.menuLabels().len;
+    if (self.menu_selected >= count) {
+        self.dismissMenu();
+        return 0;
+    }
+    return count;
+}
+
 /// The application menu, opened from the titlebar's leading button at `x`; a
 /// second press on the button closes it.
 pub fn toggleAppMenu(self: *App, x: f64) void {
     if (self.menu == .app) {
-        self.menu = null;
-        self.invalidate();
+        self.dismissMenu();
         return;
     }
     self.openMenu(.app, x, 4);
 }
 
 pub fn menuHit(self: *App, x: f64, y: f64) ?usize {
-    for (0..self.menuLabels().len) |row| {
+    for (0..self.validatedMenuCount()) |row| {
         if (self.menuRowRect(row).contains(x, y)) return row;
     }
     return null;
 }
 
 pub fn runMenu(self: *App, row: usize) void {
+    if (row >= self.validatedMenuCount()) return;
     const kind = self.menu orelse return;
-    const place_action: ?PlaceAction = if ((kind == .sidebar or kind == .device) and row < self.placeActions().len) self.placeActions()[row] else null;
-    const file_action: ?FileAction = if (kind == .file and row < self.fileActions().len) self.fileActions()[row] else null;
+    const place_action: ?PlaceAction = if (kind == .sidebar or kind == .device) self.placeActions()[row] else null;
+    const file_action: ?FileAction = if (kind == .file) self.fileActions()[row] else null;
     if (file_action == .restore and !self.trash_restorable) {
         self.setStatusNotice(tr("Original location unknown: these items have no Trash information"), true);
         return;
     }
-    self.menu = null;
+    self.dismissMenu();
     switch (kind) {
         .sidebar, .device => if (place_action) |action| switch (action) {
             .open => self.openPlace(self.menu_place),
@@ -539,6 +584,7 @@ pub fn runMenu(self: *App, row: usize) void {
 }
 
 pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
+    if (self.validatedMenuCount() == 0) return;
     const labels = self.menuLabels();
     const context = self.isContextMenu();
     const width = self.menuWidth();

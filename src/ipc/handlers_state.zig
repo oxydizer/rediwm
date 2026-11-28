@@ -56,88 +56,7 @@ pub fn handleStateRequest(
                 .workspaces = try server.world.workspaces.data(server, allocator),
             } } };
         },
-        .get_window_debug => |p| {
-            const toplevel = findToplevelById(server, p.id) orelse {
-                const msg = try std.fmt.allocPrint(allocator, "UnknownWindow: {d}", .{p.id});
-                return .{ .err = msg };
-            };
-            const surface = toplevel.surface() orelse return .{ .err = "WindowNotVisible" };
-            var src_box: wlr.FBox = undefined;
-            surface.getBufferSourceBox(&src_box);
-
-            const geometry_box = toplevel.clientGeometry();
-            const decorated = toplevel.hasServerDecorations();
-            const radius: f32 = toplevel.cornerRadius();
-            const footer = chrome.frameBorder();
-
-            const client_box: protocol.RectData = .{
-                .x = toplevel.x + if (decorated) chrome.frameBorder() else 0,
-                .y = toplevel.y + toplevel.titlebarHeight(),
-                .width = geometry_box.width,
-                .height = geometry_box.height,
-            };
-            const chrome_box: protocol.RectData = .{
-                .x = toplevel.x,
-                .y = toplevel.y,
-                .width = toplevel.chrome_width,
-                .height = toplevel.chrome_height,
-            };
-
-            var out_names = std.ArrayList([]const u8).empty;
-            const home = @import("../workspaces.zig").outputFor(toplevel);
-            var out_it = server.outputs.iterator(.forward);
-            while (out_it.next()) |out| {
-                if (home != null and out != home) continue;
-                var obox: wlr.Box = undefined;
-                server.output_layout.getBox(out.wlr_output, &obox);
-                if (obox.x < toplevel.x + toplevel.chrome_width and
-                    obox.x + obox.width > toplevel.x and
-                    obox.y < toplevel.y + toplevel.chrome_height and
-                    obox.y + obox.height > toplevel.y)
-                {
-                    try out_names.append(allocator, std.mem.span(out.wlr_output.name));
-                }
-            }
-
-            return .{
-                .ok = .{
-                    .window_debug = .{
-                        .id = toplevel.id,
-                        .title = toplevel.titleOrNull(),
-                        .app_id = toplevel.appIdOrNull(),
-                        .pid = toplevel.clientPid(),
-                        .client_box = client_box,
-                        .chrome_box = chrome_box,
-                        .titlebar_height = toplevel.titlebarHeight(),
-                        .footer_height = if (decorated) footer else 0,
-                        .frame_border = if (decorated) chrome.frameBorder() else 0,
-                        .frame_radius = if (decorated) radius else 0,
-                        .decoration_mode = if (decorated) "server" else "client",
-                        .minimized = toplevel.minimized,
-                        .maximized = toplevel.isMaximized(),
-                        .fullscreen = toplevel.isFullscreen(),
-                        .is_resizing = toplevel.isResizing(),
-                        .zoom_percent = if (server.world.workspaces.active) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
-                        .effective_zoom = toplevel.zoom(),
-                        .zoom_boosted = toplevel.zoom_boost.to != 0,
-                        .source_box = .{ .x = src_box.x, .y = src_box.y, .width = src_box.width, .height = src_box.height },
-                        // Surface width/height are logical (after scale/viewport).
-                        // Report actual submitted pixels for density diagnostics.
-                        .buffer_width = surface.current.buffer_width,
-                        .buffer_height = surface.current.buffer_height,
-                        .buffer_scale = @floatFromInt(surface.current.scale),
-                        .buffer_transform = @tagName(surface.current.transform),
-                        .configure_serial = toplevel.scheduledSerial(),
-                        .ack_serial = toplevel.ackSerial(),
-                        .outputs = try out_names.toOwnedSlice(allocator),
-                        // Kept for the wire format: frames have had no skirt to
-                        // sample since the window shapes (stage 4e).
-                        .skirt_fill = null,
-                        .edge_sample = "none",
-                    },
-                },
-            };
-        },
+        .get_window_debug => |p| return windowDebug(server, allocator, p.id),
         .get_shell_state => |p| {
             const target_out: *Output = if (p.output) |name|
                 findOutputByName(server, name) orelse {
@@ -292,3 +211,112 @@ pub fn handleStateRequest(
         else => unreachable,
     }
 }
+
+fn windowDebug(server: *Server, allocator: std.mem.Allocator, id: u64) !protocol.Response {
+    const toplevel = findToplevelById(server, id) orelse {
+        const msg = try std.fmt.allocPrint(allocator, "UnknownWindow: {d}", .{id});
+        return .{ .err = msg };
+    };
+    const surface = toplevel.surface() orelse return .{ .err = "WindowNotVisible" };
+    var colors = SurfaceColors{ .root = surface, .allocator = allocator };
+    surface.forEachSurface(*SurfaceColors, SurfaceColors.visit, &colors);
+    if (colors.failed) return error.OutOfMemory;
+    var src_box: wlr.FBox = undefined;
+    surface.getBufferSourceBox(&src_box);
+
+    const geometry_box = toplevel.clientGeometry();
+    const decorated = toplevel.hasServerDecorations();
+    const radius: f32 = toplevel.cornerRadius();
+    const footer = chrome.frameBorder();
+
+    const client_box: protocol.RectData = .{
+        .x = toplevel.x + if (decorated) chrome.frameBorder() else 0,
+        .y = toplevel.y + toplevel.titlebarHeight(),
+        .width = geometry_box.width,
+        .height = geometry_box.height,
+    };
+    const chrome_box: protocol.RectData = .{
+        .x = toplevel.x,
+        .y = toplevel.y,
+        .width = toplevel.chrome_width,
+        .height = toplevel.chrome_height,
+    };
+
+    var out_names = std.ArrayList([]const u8).empty;
+    const home = @import("../workspaces.zig").outputFor(toplevel);
+    var out_it = server.outputs.iterator(.forward);
+    while (out_it.next()) |out| {
+        if (home != null and out != home) continue;
+        var obox: wlr.Box = undefined;
+        server.output_layout.getBox(out.wlr_output, &obox);
+        if (obox.x < toplevel.x + toplevel.chrome_width and
+            obox.x + obox.width > toplevel.x and
+            obox.y < toplevel.y + toplevel.chrome_height and
+            obox.y + obox.height > toplevel.y)
+        {
+            try out_names.append(allocator, std.mem.span(out.wlr_output.name));
+        }
+    }
+
+    return .{
+        .ok = .{
+            .window_debug = .{
+                .surface_colors = colors.items.items,
+                .id = toplevel.id,
+                .title = toplevel.titleOrNull(),
+                .app_id = toplevel.appIdOrNull(),
+                .pid = toplevel.clientPid(),
+                .client_box = client_box,
+                .chrome_box = chrome_box,
+                .titlebar_height = toplevel.titlebarHeight(),
+                .footer_height = if (decorated) footer else 0,
+                .frame_border = if (decorated) chrome.frameBorder() else 0,
+                .frame_radius = if (decorated) radius else 0,
+                .decoration_mode = if (decorated) "server" else "client",
+                .minimized = toplevel.minimized,
+                .maximized = toplevel.isMaximized(),
+                .fullscreen = toplevel.isFullscreen(),
+                .is_resizing = toplevel.isResizing(),
+                .zoom_percent = if (server.world.workspaces.mode != .canvas) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
+                .effective_zoom = toplevel.zoom(),
+                .zoom_boosted = toplevel.zoom_boost.to != 0,
+                .source_box = .{ .x = src_box.x, .y = src_box.y, .width = src_box.width, .height = src_box.height },
+                // Surface width/height are logical (after scale/viewport).
+                // Report actual submitted pixels for density diagnostics.
+                .buffer_width = surface.current.buffer_width,
+                .buffer_height = surface.current.buffer_height,
+                .buffer_scale = @floatFromInt(surface.current.scale),
+                .buffer_transform = @tagName(surface.current.transform),
+                .configure_serial = toplevel.scheduledSerial(),
+                .ack_serial = toplevel.ackSerial(),
+                .outputs = try out_names.toOwnedSlice(allocator),
+                // Kept for the wire format: frames have had no skirt to
+                // sample since the window shapes (stage 4e).
+                .skirt_fill = null,
+                .edge_sample = "none",
+            },
+        },
+    };
+}
+
+// Wine may present the swapchain on a subsurface of the xdg toplevel.
+const SurfaceColors = struct {
+    root: *wlr.Surface,
+    allocator: std.mem.Allocator,
+    items: std.ArrayList(protocol.WindowDebugResult.SurfaceColor) = .empty,
+    failed: bool = false,
+
+    fn visit(surface: *wlr.Surface, _: c_int, _: c_int, self: *SurfaceColors) void {
+        if (self.failed) return;
+        const desc = wlr.color.surfaceDescription(surface);
+        self.items.append(self.allocator, .{
+            .root = self.root == surface,
+            .buffer_width = surface.current.buffer_width,
+            .buffer_height = surface.current.buffer_height,
+            .transfer = if (desc) |d| @tagName(d.transfer) else null,
+            .primaries = if (desc) |d| @tagName(d.primaries) else null,
+        }) catch {
+            self.failed = true;
+        };
+    }
+};

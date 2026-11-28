@@ -22,6 +22,16 @@ the compositor doesn't decorate windows).
 The host drives an `App` you own. The fields and methods it needs are
 listed at the top of `src/app_kit/window.zig`. `src/calculator/app.zig` is a
 complete example. Set `dirty = true` to get a frame and `closed = true` to quit.
+Optional declarations add a plain-text clipboard (`pasteText`), the App's own
+descriptors and deadlines in the host's poll loop (`pollFds`, `pollReady`,
+`timeoutMs`), a hook after live theme reloads (`themeChanged`) and partial
+repaints (`frameDamage`: the `ui.repaint.Region` that changed since the last
+frame; `render` then runs clipped to it plus what the recycled buffer missed,
+and only that much is damaged). Without `frameDamage` every frame repaints
+and damages the whole window. An `animating: bool` field, set while an
+animation needs another frame, steps it on the compositor's frame callbacks
+instead of a timer. The title is resent whenever `getTitle` changes.
+RediTerm (`src/rediterm/app.zig`) uses all of them.
 
 ## Setting up the package
 

@@ -41,6 +41,10 @@ pub const Drawer = struct {
     scroll_drag: ui.widgets.scrollbar.Drag = .{},
     bar: ui.widgets.scrollbar.Appearance = .{},
     observed_offset: i32 = 0,
+    /// What the header and scrollbar last showed, so a terminal change
+    /// repaints them only when they change (`terminalChanged`).
+    painted_label: u64 = 0,
+    observed_history: i32 = 0,
     close_at: ?i64 = null,
     close_forced: bool = false,
     preedit: std.ArrayList(u8) = .empty,

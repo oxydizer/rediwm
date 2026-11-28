@@ -6,7 +6,7 @@ const anim = @import("ui").anim;
 const World = @import("../World.zig");
 
 pub fn springPan(world: *World, x: f64, y: f64, target: anim.Target) void {
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return;
     world.pan_target = target;
     world.mini_map.show(world.server, world.server.input.cursor.x, world.server.input.cursor.y);
     if (world.pinching) world.endPinch(false);
@@ -33,7 +33,7 @@ pub fn springPan(world: *World, x: f64, y: f64, target: anim.Target) void {
 }
 
 pub fn beginPan(world: *World) void {
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return;
     world.mini_map.show(world.server, world.server.input.cursor.x, world.server.input.cursor.y);
     if (world.pinching) world.endPinch(false);
     world.zoom_keeps_anchor = false;
@@ -48,7 +48,7 @@ pub fn beginPan(world: *World) void {
 }
 
 pub fn panBy(world: *World, dx: f64, dy: f64) void {
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return;
     if (!world.panning) world.beginPan();
     _ = camera_mod.applyMotionRubber(&world.camera, dx, dy, world.bounds, &world.pan_raw_x, &world.pan_raw_y);
     world.applyCamera();

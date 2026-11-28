@@ -883,8 +883,8 @@ msgid "Canvas size"
 msgstr "Tamanho da área de trabalho ampla"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Área de trabalho ampla · Predefinição do RediWM"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Clássico e Área de trabalho ampla · Predefinição do RediWM"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1119,8 +1119,8 @@ msgid "Choose your window layout"
 msgstr "Escolha a organização das janelas"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Clássico (empilhamento)"
+msgid "Classic"
+msgstr "Clássico"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -4083,8 +4083,8 @@ msgid "Pan Up"
 msgstr "Deslocar para cima"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Desloque e amplie a área de trabalho ampla. Ao voltar, suas posições e ampliação serão restauradas."
+msgid "Pan and zoom the canvas."
+msgstr "Desloque e amplie a área de trabalho ampla."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5545,6 +5545,10 @@ msgid "Swap the focused tile up."
 msgstr "Trocar a janela em mosaico em foco para cima."
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Alternar entre os últimos modos de sobreposição e de mosaico usados."
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr "Alternar para o próximo perfil de energia."
 
@@ -6044,9 +6048,13 @@ msgstr "Ajustar à direita"
 msgid "Tile Up"
 msgstr "Ajustar acima"
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
 msgstr "Mosaico"
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
+msgstr "Mosaico e rolagem · Predefinição no estilo do Hyprland"
 
 #: src/control_center/sections/region.zig
 msgid "Time"
@@ -6609,14 +6617,6 @@ msgstr "Organização do espaço de trabalho"
 msgid "Workspace {n}"
 msgstr "Espaço de trabalho {n}"
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr "Espaços de trabalho"
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr "Espaços de trabalho · Predefinição no estilo do Hyprland"
-
 #: src/files/properties.zig
 msgid "Write"
 msgstr "Gravar"
@@ -6766,8 +6766,8 @@ msgid "calendar monday sunday"
 msgstr "calendário segunda domingo"
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr "área de trabalho ampla espaços trabalho mosaico"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "clássico sobreposição área de trabalho ampla mosaico rolagem espaços trabalho"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

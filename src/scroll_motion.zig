@@ -74,19 +74,30 @@ pub fn active(server: *Server, id: u8) bool {
     return current(server, id).active();
 }
 
-/// Whether a gesture holds the view, or focus follows a release: a reveal
-/// would fight it.
+/// Whether a gesture or edge scrolling holds the view, or focus follows a
+/// release: a reveal would fight it.
 pub fn holdsView(server: *Server, id: u8) bool {
     if (id == 0 or id > workspaces.count) return false;
     const motion = current(server, id);
-    return motion.source != .none or motion.focusing;
+    return motion.source != .none or motion.focusing or motion.edge != 0;
 }
 
-/// A reveal takes over from a settling view where it is.
+/// The view a released gesture is still settling on, when nothing else
+/// holds the view.
+pub fn settlingTo(server: *Server, id: u8) ?f64 {
+    if (id == 0 or id > workspaces.count) return null;
+    const motion = current(server, id);
+    if (motion.source != .none or motion.edge != 0 or !motion.snap.active()) return null;
+    return motion.target;
+}
+
+/// A reveal takes over from a settling view where it is, and places the
+/// windows itself.
 pub fn stopSnap(server: *Server, id: u8) void {
     const motion = motionOf(server, id);
     if (!motion.snap.active()) return;
     motion.snap.cancel(motion.snap.value(anim.nowMs()));
+    motion.pending = false;
 }
 
 /// The scrolling workspace shown at layout point (x, y).
@@ -168,12 +179,15 @@ fn settle(server: *Server, id: u8, target: f64, velocity: f64) void {
 }
 
 /// Keeps focus when its column shows at the settled view; otherwise focuses
-/// the member of the settled column nearest it.
+/// the member of the settled column nearest it. Centring always, focus
+/// must be a column the settled view centres, or the next reveal would
+/// move the view again.
 fn focusShown(server: *Server, id: u8, snap: scroll.Snap) void {
     const strip = stripOf(server, id);
     const focused = scroll_tiling.focusKey(server, id);
     if (focused) |key| if (strip.locate(key)) |at| {
-        if (strip.columnFits(at.column, snap.view)) return;
+        const center = scroll_tiling.center(server);
+        if (if (center == .always) strip.revealView(key, center) == snap.view else strip.columnCovers(at.column, snap.view)) return;
     };
     const key = strip.memberNear(snap.column, if (focused) |k| strip.rectangle(k) else null) orelse return;
     const top = scroll_tiling.windowFor(server, id, key) orelse return;
@@ -250,10 +264,12 @@ pub fn tick(server: *Server, now_ms: i64) bool {
                 animating = true;
             }
         }
+        var settled = false;
         if (motion.snap.active()) {
             if (motion.snap.settled(now_ms)) {
                 strip.view = motion.target;
                 motion.snap.cancel(@floatCast(motion.target));
+                settled = true;
             } else {
                 strip.view = motion.snap.value(now_ms);
                 animating = true;
@@ -265,6 +281,9 @@ pub fn tick(server: *Server, now_ms: i64) bool {
         strip.place();
         scroll_tiling.place(server, id, false);
         if (motion.edge != 0) @import("tiling_grab.zig").refreshPreview(&server.input);
+        // A settled view always shows the focused column, whatever changed
+        // while it moved.
+        if (settled) scroll_tiling.revealFocus(server, id);
     }
     return animating;
 }

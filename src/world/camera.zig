@@ -18,6 +18,7 @@ pub fn initBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, la
 /// the reachable area (and the mini-map drawn from it) never depends on where
 /// a window happened to pass through.
 pub fn derivedBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, layout_h: i32) camera_mod.Bounds {
+    if (world.workspaces.mode == .classic) return camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, 1, 1);
     const cfg = world.server.config.compositor;
     const grid = camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, cfg.canvas_columns, cfg.canvas_rows);
     if (world.workspaces.active) return grid;
@@ -57,7 +58,7 @@ pub fn expandForToplevel(bounds: *camera_mod.Bounds, top: *const Toplevel) void 
 /// the new limits glides back. During a move or resize grab they only grow, so
 /// the canvas doesn't pull in under the pointer.
 pub fn refreshBounds(world: *World) void {
-    if (world.workspaces.active or world.bounds.width <= 0 or world.bounds.height <= 0) return;
+    if (world.workspaces.mode != .canvas or world.bounds.width <= 0 or world.bounds.height <= 0) return;
     const old = world.bounds;
     var next = world.derivedBounds(@intFromFloat(@round(old.origin_x)), @intFromFloat(@round(old.origin_y)), @intFromFloat(@round(old.width)), @intFromFloat(@round(old.height)));
     const input = &world.server.input;
@@ -76,13 +77,13 @@ pub fn refreshBounds(world: *World) void {
 
 /// Keep `toplevel` reachable right away, between per-frame refreshes.
 pub fn ensureToplevelInBounds(world: *World, toplevel: *const Toplevel) void {
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return;
     expandForToplevel(&world.bounds, toplevel);
 }
 
 /// Project the world without changing source nodes or client geometry.
 pub fn applyCamera(world: *World) void {
-    if (world.workspaces.active) world.camera = .{ .focus_zoom = 1 };
+    if (world.workspaces.mode != .canvas) world.camera = .{ .focus_zoom = 1 };
     if (!world.allowsOverscroll()) {
         world.camera.clamp(world.bounds);
     }
@@ -143,14 +144,15 @@ pub fn flushCameraEvent(world: *World) void {
 /// Use the same visibility threshold as window navigation. A focused window
 /// showing only a sliver should be revealed by its taskbar button, not minimized.
 pub fn isWindowVisible(world: *World, toplevel: *Toplevel, output: *@import("../Output.zig")) bool {
-    return toplevel.frame_tree.node.enabled and toplevel.chrome_width > 0 and toplevel.chrome_height > 0 and
-        world.windowFocusOffset(toplevel, output, world.camera, toplevel.worldScale(), false) == null;
+    if (!toplevel.frame_tree.node.enabled or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) return false;
+    if (world.workspaces.mode == .classic) return @import("../workspaces.zig").classicWindowReachable(toplevel, output);
+    return world.windowFocusOffset(toplevel, output, world.camera, toplevel.worldScale(), false) == null;
 }
 
 /// Reveal `toplevel` on `output` if it is currently offscreen.
 pub fn revealIfOffscreen(world: *World, toplevel: *Toplevel, output: *@import("../Output.zig")) void {
     world.workspaces.reveal(toplevel);
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return @import("../workspaces.zig").keepClassicWindowVisible(toplevel);
     if (world.windowFocusOffset(toplevel, output, world.camera, toplevel.worldScale(), false)) |offset| {
         world.springPan(offset.x, offset.y, .camera_reveal);
     }
@@ -167,7 +169,7 @@ pub fn windowFocusOffset(world: *World, toplevel: *Toplevel, output: *@import(".
 /// Plain pointer focus does not change the zoom beneath the pointer.
 pub fn navigateTo(world: *World, toplevel: *Toplevel, output: *@import("../Output.zig")) void {
     world.workspaces.reveal(toplevel);
-    if (world.workspaces.active) return;
+    if (world.workspaces.mode != .canvas) return @import("../workspaces.zig").keepClassicWindowVisible(toplevel);
     if (!toplevel.in_world or toplevel.minimized) return;
     const mode = world.server.config.compositor.focus_zoom;
     const floating = toplevel.layout() == .floating and !toplevel.isFullscreen();
@@ -209,6 +211,7 @@ pub fn reveal(
 
 /// Reset the camera to the origin and 100%, springing independently on each axis.
 pub fn resetCamera(world: *World) void {
+    if (world.workspaces.mode != .canvas) return;
     world.mini_map.show(world.server, world.server.input.cursor.x, world.server.input.cursor.y);
     // Record for undo before modifying camera state.
     {

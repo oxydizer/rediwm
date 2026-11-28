@@ -1,8 +1,11 @@
 //! Two shm buffers with Cairo image surfaces over them, reused until the
-//! compositor releases them. A busy buffer is never written.
+//! compositor releases them. A busy buffer is never written. Each remembers
+//! what changed while the other one was shown (`stale`), so a partial repaint
+//! of a recycled buffer catches up on it (`ui/repaint.zig`).
 const std = @import("std");
 const wl = @import("wayland").client.wl;
 const c = @import("c_gfx");
+const Region = @import("ui").repaint.Region;
 const a = std.heap.c_allocator;
 
 pub const Pool = struct {
@@ -31,6 +34,15 @@ pub const Pool = struct {
         return null;
     }
 
+    /// `damage` was drawn into `buffer`: it is current, and the other buffer
+    /// now misses that much too.
+    pub fn painted(self: *Pool, buffer: *Buffer, damage: *const Region) void {
+        for (self.slots) |slot| if (slot) |other| {
+            if (other != buffer) other.stale.merge(damage);
+        };
+        buffer.stale.clear();
+    }
+
     /// Marks `buffer` held until its release event.
     pub fn submit(self: *Pool, buffer: *Buffer) void {
         buffer.busy = true;
@@ -54,6 +66,8 @@ pub const Buffer = struct {
     w: i32,
     h: i32,
     busy: bool = false,
+    /// What changed since this buffer was last drawn; a new one is all stale.
+    stale: Region = .whole,
 
     fn create(pool: *Pool, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;

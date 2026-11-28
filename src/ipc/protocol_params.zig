@@ -654,7 +654,7 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             const p = params orelse return error.InvalidRequest;
             const mode = p.get("mode") orelse return error.InvalidRequest;
             if (mode != .string) return error.InvalidRequest;
-            return .{ .set_desktop_mode = .{ .mode = std.meta.stringToEnum(@import("config").loader.DesktopMode, mode.string) orelse return error.InvalidRequest, .persist = try persistParam(p) } };
+            return .{ .set_desktop_mode = .{ .mode = @import("config").loader.DesktopMode.fromName(mode.string) orelse return error.InvalidRequest, .persist = try persistParam(p) } };
         },
         .switch_workspace, .move_to_workspace, .set_workspace_layout => {
             const p = params orelse return error.InvalidRequest;

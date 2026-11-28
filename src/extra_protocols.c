@@ -35,10 +35,11 @@ struct rediwm_protocols {
   struct wlr_drm_lease_v1_manager *lease;
   struct wlr_ext_workspace_group_handle_v1 *group;
   struct wlr_ext_workspace_manager_v1 *workspaces;
-  struct wlr_ext_workspace_handle_v1 *canvas, *workspace[32];
+  struct wlr_ext_workspace_handle_v1 *stacking, *workspace[32];
   struct wl_listener workspace_commit;
   void (*activate_workspace)(void *, unsigned);
   bool workspace_mode;
+  bool classic_mode;
   struct wl_listener tag, description, lease_request, layout_add;
   struct wl_listener system_bell;
   struct wl_listener new_dialog;
@@ -182,15 +183,32 @@ static void workspace_commit(struct wl_listener *listener, void *data) {
     }
   }
 }
-void rediwm_workspace_mode(struct rediwm_protocols *p, bool enabled, void (*activate)(void *, unsigned)) {
+static bool create_stacking_workspace(struct rediwm_protocols *p) {
+  p->stacking = wlr_ext_workspace_handle_v1_create(p->workspaces,
+      p->classic_mode ? "rediwm-classic" : "rediwm-canvas", 0);
+  if (!p->stacking) return false;
+  wlr_ext_workspace_handle_v1_set_group(p->stacking, p->group);
+  wlr_ext_workspace_handle_v1_set_name(p->stacking, p->classic_mode ? "Classic" : "Canvas");
+  wlr_ext_workspace_handle_v1_set_active(p->stacking, true);
+  return true;
+}
+void rediwm_workspace_mode(struct rediwm_protocols *p, bool enabled, bool classic, void (*activate)(void *, unsigned)) {
   if (!p) return;
   p->activate_workspace = activate;
-  if (p->workspace_mode == enabled) return;
+  if (p->workspace_mode == enabled) {
+    if (!enabled && p->classic_mode != classic) {
+      p->classic_mode = classic;
+      if (p->stacking) wlr_ext_workspace_handle_v1_destroy(p->stacking);
+      create_stacking_workspace(p);
+    }
+    return;
+  }
   p->workspace_mode = enabled;
+  p->classic_mode = classic;
   struct workspace_output *o;
   if (enabled) {
-    if (p->canvas) wlr_ext_workspace_handle_v1_destroy(p->canvas);
-    p->canvas = NULL;
+    if (p->stacking) wlr_ext_workspace_handle_v1_destroy(p->stacking);
+    p->stacking = NULL;
     if (p->group) wlr_ext_workspace_group_handle_v1_destroy(p->group);
     p->group = NULL;
   } else {
@@ -204,12 +222,7 @@ void rediwm_workspace_mode(struct rediwm_protocols *p, bool enabled, void (*acti
       o->group = NULL;
       if (p->group) wlr_ext_workspace_group_handle_v1_output_enter(p->group, o->output);
     }
-    p->canvas = wlr_ext_workspace_handle_v1_create(p->workspaces, "rediwm-canvas", 0);
-    if (p->canvas) {
-      wlr_ext_workspace_handle_v1_set_group(p->canvas, p->group);
-      wlr_ext_workspace_handle_v1_set_name(p->canvas, "Canvas");
-      wlr_ext_workspace_handle_v1_set_active(p->canvas, true);
-    }
+    create_stacking_workspace(p);
   }
 }
 void rediwm_workspace_update(struct rediwm_protocols *p, unsigned id, const char *name, struct wlr_output *output, bool active) {
@@ -371,12 +384,7 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   p->workspace_commit.notify = workspace_commit;
   wl_signal_add(&workspaces->events.commit, &p->workspace_commit);
   p->group = wlr_ext_workspace_group_handle_v1_create(workspaces, 0);
-  struct wlr_ext_workspace_handle_v1 *canvas = wlr_ext_workspace_handle_v1_create(workspaces, "rediwm-canvas", 0);
-  if (!p->group || !canvas) goto fail;
-  p->canvas = canvas;
-  wlr_ext_workspace_handle_v1_set_group(canvas, p->group);
-  wlr_ext_workspace_handle_v1_set_name(canvas, "Canvas");
-  wlr_ext_workspace_handle_v1_set_active(canvas, true);
+  if (!p->group || !create_stacking_workspace(p)) goto fail;
   p->layout_add.notify = output_added; wl_signal_add(&layout->events.add, &p->layout_add);
   struct wlr_output_layout_output *lo;
   wl_list_for_each(lo, &layout->outputs, link) output_added(&p->layout_add, lo);

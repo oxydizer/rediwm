@@ -184,7 +184,7 @@ def workspace_focus(scale):
                     ids.append(wait_for(lambda: next((w["id"] for w in ipc.get_windows()
                         if w["app_id"] == "border-" + mode), None), "map " + mode))
                     paths.append(path)
-                ipc.action("set_desktop_mode", {"mode": "workspaces", "persist": False})
+                ipc.action("set_desktop_mode", {"mode": "tiling", "persist": False})
                 wait_for(lambda: all(w["placement"] == "automatic" for w in ipc.get_windows()), "default tiles")
                 assert ipc.get_workspaces()[0]["window_gap"] == 8
                 def tiled_frames():

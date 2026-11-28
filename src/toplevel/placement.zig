@@ -52,6 +52,7 @@ pub fn forcedGeometry(toplevel: *const Toplevel) ?RestoreGeometry {
 
 pub fn applyForcedGeometry(toplevel: *Toplevel) c_int {
     const forced = toplevel.forcedGeometry() orelse return 0;
+    const restoring = toplevel.pending_restore != null;
     if (toplevel.minimized and toplevel.backend == .xdg) {
         // The size went out with the change that armed this timer; repeating
         // it would configure a minimized window, which Wine reads as a restore
@@ -68,6 +69,7 @@ pub fn applyForcedGeometry(toplevel: *Toplevel) c_int {
         toplevel.setPositionAnimated(forced.x, forced.y);
     }
     toplevel.pending_restore = null;
+    if (restoring) @import("../workspaces.zig").keepClassicWindowVisible(toplevel);
     return 0;
 }
 

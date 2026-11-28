@@ -33,7 +33,7 @@ def run():
         # their own [keybinds], like hardware keys.
         workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
         config = ('[compositor]\nxwayland = false\n' +
-                  ('desktop_mode = "workspaces"\n[keybinds.workspace]\n'
+                  ('desktop_mode = "tiling"\n[keybinds.workspace]\n'
                    '"super+z" = "toggle_floating"\n"super+x" = "toggle_floating"\n'
                    if workspace_mode else '[keybinds]\n'
                    '"super+z" = "set_depth 2"\n"super+x" = "set_depth 0"\n') +

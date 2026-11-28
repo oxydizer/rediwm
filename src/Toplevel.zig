@@ -304,6 +304,7 @@ maximize_restore: ?RestoreGeometry = null,
 fullscreen_restore: ?RestoreGeometry = null,
 maximize_target: ?RestoreGeometry = null,
 fullscreen_target: ?RestoreGeometry = null,
+scroll_cover: bool = false,
 // Automatic rectangles are independent of manual half/quarter tiles.
 // Explicit floating placement opts a member out; overflow can retry later.
 auto_target: ?RestoreGeometry = null,
@@ -589,6 +590,8 @@ pub const floatingGeometry = toplevel_layout.floatingGeometry;
 pub const setTiled = toplevel_layout.setTiled;
 pub const setTiledOn = toplevel_layout.setTiledOn;
 pub const setAutoTile = toplevel_layout.setAutoTile;
+pub const setScrollingCover = toplevel_layout.setScrollingCover;
+pub const prepareAutoTile = toplevel_layout.prepareAutoTile;
 pub const clearAutoTile = toplevel_layout.clearAutoTile;
 pub const untile = toplevel_layout.untile;
 pub const leaveLayout = toplevel_layout.leaveLayout;

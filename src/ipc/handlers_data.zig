@@ -146,7 +146,7 @@ pub fn makeWindowData(server: *Server, toplevel: *Toplevel) protocol.WindowData 
         .y = toplevel.y,
         .width = toplevel.logicalWidth(),
         .height = toplevel.logicalHeight(),
-        .zoom_percent = if (server.world.workspaces.active) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
+        .zoom_percent = if (server.world.workspaces.mode != .canvas) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
         .backend = toplevel.backendName(),
         .x11_class = toplevel.x11Class(),
         .x11_instance = toplevel.x11Instance(),

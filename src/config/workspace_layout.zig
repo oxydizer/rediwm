@@ -57,7 +57,16 @@ pub const Column = struct { width: f64 = 0.5, members: []const ColumnMember = &.
 /// How a workspace arranges its windows.
 pub const Layout = enum { floating, split, scrolling };
 /// The tiled desktop mode a session last used, for switching back from Canvas.
-pub const TiledMode = enum { workspaces, scrolling };
+pub const TiledMode = enum {
+    tiling,
+    scrolling,
+
+    pub fn jsonParse(a: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !TiledMode {
+        const name = try std.json.innerParse([]const u8, a, source, options);
+        if (std.mem.eql(u8, name, "workspaces")) return .tiling;
+        return std.meta.stringToEnum(TiledMode, name) orelse error.InvalidEnumTag;
+    }
+};
 pub const Workspace = struct {
     id: u8,
     /// Version 2 only: false is a floating workspace.
@@ -178,6 +187,12 @@ test "version 2 automatic maps to the mode's layout or floating" {
     try std.testing.expectEqual(@as(?Layout, .floating), old.value.workspaces[0].layout);
     try std.testing.expectEqual(@as(?Layout, null), old.value.workspaces[1].layout);
     try std.testing.expectEqual(@as(?TiledMode, null), old.value.mode);
+    var legacy_mode = try parse(a, "{\"version\":3,\"mode\":\"workspaces\",\"workspaces\":[],\"windows\":[]}");
+    defer legacy_mode.deinit();
+    try std.testing.expectEqual(@as(?TiledMode, .tiling), legacy_mode.value.mode);
+    const renamed = try stringify(a, legacy_mode.value);
+    defer a.free(renamed);
+    try std.testing.expect(std.mem.indexOf(u8, renamed, "\"mode\":\"tiling\"") != null);
     const bytes = try stringify(a, .{ .mode = .scrolling, .workspaces = &.{ .{ .id = 1, .layout = .scrolling }, .{ .id = 2 } }, .windows = &.{} });
     defer a.free(bytes);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "automatic") == null);

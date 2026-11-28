@@ -72,11 +72,10 @@ static const char ribbon_fragment[] =
         "float rim=d-.90;"
         "float f=.40*sin(t*12.566371+fade.y);"
         "core=.35*filament(rim,.009)+.16*filament(x-f,.007);"
-        // The resize band joins two outlines. Keep a continuous coloured
-        // sheet across its full width, including the window and target edges.
+        // Fade the inner edge of the narrow band into the window or backdrop.
         "light=.35*core+.36+.06*ridge(rim,.025)+.18*ridge(x,.65)"
             "+.08*ridge(x-f,.10)+.05*ridge(x+f*.7,.20);"
-        "opacity=fade.x;"
+        "opacity=fade.x*smoothstep(-1.,-.15,x);"
     "}else if(mode==4){"
         // A low-opacity colour wash, stronger near the window and softly
         // feathered into the two flames. No hot creases in the middle.

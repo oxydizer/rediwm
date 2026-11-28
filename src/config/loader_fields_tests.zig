@@ -100,8 +100,12 @@ test "config field parsing preserves ranges and derived zoom state" {
     }
     try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "dock_position", "center"));
     try std.testing.expectEqual(@as(u32, 0), c.windowGap());
-    c.desktop_mode = .workspaces;
-    try std.testing.expectEqual(@as(u32, 8), c.windowGap());
+    for ([_][]const u8{ "\"tiling\"", "\"workspaces\"" }) |value| {
+        try applyCompositorKey(&c, a, "desktop_mode", "canvas");
+        try applyCompositorKey(&c, a, "desktop_mode", value);
+        try std.testing.expect(c.desktop_mode == .tiling);
+        try std.testing.expectEqual(@as(u32, 8), c.windowGap());
+    }
     try applyCompositorKey(&c, a, "window_gap", "0");
     try std.testing.expectEqual(@as(u32, 0), c.windowGap());
     c.desktop_mode = .canvas;

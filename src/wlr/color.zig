@@ -17,6 +17,21 @@ pub const TransferFunction = enum(c_int) {
     bt1886 = c.WLR_COLOR_TRANSFER_FUNCTION_BT1886,
 };
 
+pub const SurfaceDescription = struct {
+    transfer: TransferFunction,
+    primaries: NamedPrimaries,
+};
+
+/// The client's committed image description. Untagged surfaces use the
+/// compositor's SDR default, even on a PQ output.
+pub fn surfaceDescription(surface: *wlr.Surface) ?SurfaceDescription {
+    const description = c.wlr_surface_get_image_description_v1_data(@ptrCast(surface)) orelse return null;
+    return .{
+        .transfer = @fromBackingInt(@intCast(c.wlr_color_manager_v1_transfer_function_to_wlr(description.*.tf_named))),
+        .primaries = @fromBackingInt(@intCast(c.wlr_color_manager_v1_primaries_to_wlr(description.*.primaries_named))),
+    };
+}
+
 pub const Encoding = enum(c_int) {
     none = c.WLR_COLOR_ENCODING_NONE,
     identity = c.WLR_COLOR_ENCODING_IDENTITY,
@@ -60,7 +75,7 @@ comptime {
 }
 
 pub fn primariesFromNamed(out: *Primaries, named: NamedPrimaries) void {
-    c.wlr_color_primaries_from_named(@ptrCast(out), @intCast(@intFromEnum(named)));
+    c.wlr_color_primaries_from_named(@ptrCast(out), @intCast(@backingInt(named)));
 }
 
 pub fn transformInitLut3x1d(dim: usize, r: [*]const u16, g: [*]const u16, b: [*]const u16) ?*@import("wlr.zig").ColorTransform {

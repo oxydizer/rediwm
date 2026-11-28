@@ -422,6 +422,9 @@ def run():
                 repeated = wait_for(lambda: next((p.name for p in home.iterdir() if p.name.startswith("a") and set(p.name) == {"a"}), None),
                                     "held key did not make a folder")
                 assert 8 <= len(repeated) <= 30, repeated
+                # Keep Archive in the first cell even if the repeat-created
+                # folder sorts before it and the deletion scan is still pending.
+                search("Archive")
                 (home / repeated).rmdir()
 
                 # A right-click targets the clicked item, including rename.
@@ -430,6 +433,8 @@ def run():
                 text("Archive renamed")
                 key(28)
                 wait_for(lambda: (home / "Archive renamed").is_dir(), "context rename failed")
+                assert not (home / "Archive").exists()
+                key(1)  # Clear the local filter before testing empty space.
 
                 # Empty-space menu near the edge must remain clickable after clamping.
                 click(935, 500, 273)
@@ -496,7 +501,7 @@ def run():
                 title("Documents")  # Unpin does not navigate or delete the folder.
                 assert (home / "Documents").is_dir()
                 saved = (tmp / "state/rediwm/files-view").read_bytes()
-                assert len(saved) == 10 and saved[0] == ord("4") and saved[3] & 2 and saved[4] == 1, saved
+                assert len(saved) == 11 and saved[0] == ord("5") and saved[3] & 2 and saved[4] == 1, saved
                 click(70, 305)  # Downloads now occupies Documents' old row.
                 title("Downloads")
                 click(70, 140, 273)  # Home has Open, Open in New Window and Properties.
@@ -523,10 +528,12 @@ def run():
 
                 def pane_width_is(width):
                     image = sidebar_shot()
-                    background = image.getpixel((5, 120))
-                    return (image.getpixel((width - 20, 120)) == background and
-                            image.getpixel((width - 1, 120)) != background and
-                            image.getpixel((width + 2, 120)) != background)
+                    # The shared splitter paints one pixel when idle and
+                    # two when engaged, immediately left of the boundary.
+                    left = image.getpixel((width - 3, 120))
+                    divider = image.getpixel((width - 1, 120))
+                    right = image.getpixel((width, 120))
+                    return divider != left and divider != right
 
                 def drag_divider(start, end):
                     box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
@@ -561,225 +568,236 @@ def run():
                 if "--places-only" in sys.argv:
                     return
 
-                # Repository discovery switches a grid preference to Name/Git.
-                # Changes remain live across index updates and branch switches.
-                repo = home / "git-project"
-                repo.mkdir()
-                def git(*args):
-                    return subprocess.check_output(
-                        ["git", "-c", "user.name=Files Test", "-c", "user.email=files@example.invalid",
-                         "-c", "commit.gpgsign=false", "-C", str(repo), *args],
-                        env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null"),
-                        stderr=subprocess.STDOUT)
-                git("init", "-b", "main")
-                (repo / "alpha.txt").write_text("original\nsecond\nthird\n")
-                (repo / "beta.txt").write_text("deleted")
-                git("add", ".")
-                git("commit", "-m", "initial")
-                git("checkout", "-b", "upstream")
-                git("commit", "--allow-empty", "-m", "upstream change")
-                git("checkout", "main")
-                git("branch", "--set-upstream-to=upstream")
-                git("commit", "--allow-empty", "-m", "local change")
-                (repo / "alpha.txt").write_text("modified\n" * 10)
-                git("add", "alpha.txt")
-                (repo / "alpha.txt").write_text("modified\n" * 28)
-                (repo / "beta.txt").unlink()
-                (repo / "gamma.txt").write_text("added")
-                git("add", "gamma.txt")
-                diff_ran = tmp / "repository-diff-helper-ran"
-                git("config", "diff.test.command", f"sh -c 'touch {diff_ran}'")
-                git("config", "diff.test.textconv", f"sh -c 'touch {diff_ran}'")
-                (repo / ".git/info/attributes").write_text("alpha.txt diff=test\n")
-                # Git view lists changed files flat, from any depth, below the others.
-                (repo / "zdir" / "inner").mkdir(parents=True)
-                (repo / "zdir" / "inner" / "omega.txt").write_text("nested")
-                key(38, ctrl=True)
-                text(str(repo))
-                key(28)
-                title("git-project")
-                time.sleep(.5)
-
-                from PIL import Image
-                def git_shot():
-                    shot = tmp / "git.png"
-                    shot.unlink(missing_ok=True)
-                    action('screenshot', {"path": str(shot)})
-                    box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
-                    with Image.open(shot) as full:
-                        return full.convert("RGB").crop((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
-
-                def reveal_git_card():
-                    # The Git card is the last sidebar section; scroll it into view.
-                    box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
-                    action('move_cursor', {"x": box["x"] + 100, "y": box["y"] + 300})
-                    action('scroll', {"dx": 0, "dy": -1200})
-                    time.sleep(.8)
-
-                def badges(offset=190):
-                    image = git_shot()
-                    # List cell ends at width-34; Git defaults to 164px.
-                    x = image.width - offset
-                    return [image.getpixel((x, 140 + row * 32)) for row in range(3)]
-
-                def changed_badges():
-                    modified, deleted, added = badges()
-                    return modified[1] > modified[0] + 12 and deleted[0] > deleted[1] + 12 and added[1] > added[0] + 12
-                wait_for(changed_badges, "Git M/D/A badges did not appear")
-                # Both line-count colours appear beside M: staged and working
-                # changes combine into +28 -3, rather than double counting.
-                def count_pixels(image, row=0):
-                    return image.crop((image.width - 160, 128 + row * 32,
-                                       image.width - 40, 152 + row * 32)).tobytes()
-                raw = count_pixels(git_shot())
-                pixels = zip(raw[0::3], raw[1::3], raw[2::3])
-                assert any(g > r + 40 and g > b + 25 for r, g, b in pixels), "added-line count missing"
-                pixels = zip(raw[0::3], raw[1::3], raw[2::3])
-                assert any(r > g + 40 and r > b + 25 for r, g, b in pixels), "removed-line count missing"
-                assert not diff_ran.exists(), "line counts ran a repository's diff helper"
-                # Header divider moves the Git badge with it and never sorts.
-                image = git_shot()
-                box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
-                divider = image.width - 198
-                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
-                action('pointer_button', {"button": 272, "pressed": True})
-                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 160})
-                action('pointer_button', {"button": 272, "pressed": False})
-                wait_for(lambda: (lambda p: p[1] > p[0] + 12)(git_shot().getpixel((image.width - 238, 140))),
-                         "Name/Git divider did not resize the columns")
-                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 110})
-                action('pointer_button', {"button": 272, "pressed": True})
-                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
-                action('pointer_button', {"button": 272, "pressed": False})
-                wait_for(changed_badges, "Git columns did not resize back")
-                # Content edits refresh just the counts as well as the status.
-                counts_before = count_pixels(git_shot())
-                (repo / "alpha.txt").write_text("modified\n" * 29)
-                wait_for(lambda: count_pixels(git_shot()) != counts_before, "line counts did not refresh after editing")
-                (repo / "alpha.txt").write_text("modified\n" * 28)
-                wait_for(lambda: count_pixels(git_shot()) == counts_before, "line counts did not return after editing")
-                # No folder row precedes the files (they would push the badges down), and the
-                # nested file is the fourth row, labelled with its path from the folder.
-                def nested_row():
-                    image = git_shot()
-                    badge = image.getpixel((image.width - 190, 140 + 3 * 32))
-                    return badge[1] > badge[0] + 12, image.crop((250, 140 + 3 * 32 - 12, 700, 140 + 3 * 32 + 12)).tobytes()
-                assert nested_row()[0], "nested changed file was not listed flat"
-                with_path = nested_row()[1]
-                def toggle_full_paths():
-                    click(900, 62)  # Filter: folders only, hidden, changed files, full paths
-                    for _ in range(3):
-                        key(108)
+                # Follow the production Git feature gate.
+                import re
+                worker_scan = (Path(__file__).resolve().parents[1] /
+                               "src/files/worker_scan.zig").read_text()
+                gate = re.search(
+                    r"(?m)^\s*const git_enabled = (true|false);", worker_scan)
+                assert gate is not None, "Git feature gate not found"
+                if gate.group(1) == "true":
+                    # Repository discovery switches a grid preference to Name/Git.
+                    # Changes remain live across index updates and branch switches.
+                    repo = home / "git-project"
+                    repo.mkdir()
+                    def git(*args):
+                        return subprocess.check_output(
+                            ["git", "-c", "user.name=Files Test", "-c", "user.email=files@example.invalid",
+                             "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+                            env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null"),
+                            stderr=subprocess.STDOUT)
+                    git("init", "-b", "main")
+                    (repo / "alpha.txt").write_text("original\nsecond\nthird\n")
+                    (repo / "beta.txt").write_text("deleted")
+                    git("add", ".")
+                    git("commit", "-m", "initial")
+                    git("checkout", "-b", "upstream")
+                    git("commit", "--allow-empty", "-m", "upstream change")
+                    git("checkout", "main")
+                    git("branch", "--set-upstream-to=upstream")
+                    git("commit", "--allow-empty", "-m", "local change")
+                    (repo / "alpha.txt").write_text("modified\n" * 10)
+                    git("add", "alpha.txt")
+                    (repo / "alpha.txt").write_text("modified\n" * 28)
+                    (repo / "beta.txt").unlink()
+                    (repo / "gamma.txt").write_text("added")
+                    git("add", "gamma.txt")
+                    diff_ran = tmp / "repository-diff-helper-ran"
+                    git("config", "diff.test.command", f"sh -c 'touch {diff_ran}'")
+                    git("config", "diff.test.textconv", f"sh -c 'touch {diff_ran}'")
+                    (repo / ".git/info/attributes").write_text("alpha.txt diff=test\n")
+                    # Git view lists changed files flat, from any depth, below the others.
+                    (repo / "zdir" / "inner").mkdir(parents=True)
+                    (repo / "zdir" / "inner" / "omega.txt").write_text("nested")
+                    key(38, ctrl=True)
+                    text(str(repo))
                     key(28)
-                toggle_full_paths()
-                wait_for(lambda: nested_row()[1] != with_path, "Show full paths did not change the Name column")
-                toggle_full_paths()
-                wait_for(lambda: nested_row()[1] == with_path, "Show full paths did not return")
-                reveal_git_card()
-                image = git_shot()
-                # Empty points in the Git section use the plain sidebar surface.
-                assert image.getpixel((12, 345)) == image.getpixel((5, 345)), "Git sidebar still has its red bar"
-                assert image.getpixel((170, 345)) == image.getpixel((5, 345)), "Git sidebar still has its red highlight"
-                if preview := os.environ.get("REDIWM_FILES_GIT_PREVIEW"):
-                    git_shot().save(preview)
-                # The Git View checkbox, left of the view buttons, shows the
-                # repository as an ordinary folder when off and remembers that.
-                prefs = tmp / "state/rediwm/files-view"
-                checkbox_x = git_shot().width - 380
-                click(checkbox_x, 62)
-                wait_for(lambda: prefs.read_bytes()[4] == 0, "Git View checkbox did not turn off")
-                wait_for(lambda: all(max(pixel) - min(pixel) < 30 for pixel in badges(offset=90)),
-                         "Git badges stayed with Git View off")
-                click(checkbox_x, 62)
-                wait_for(lambda: prefs.read_bytes()[4] == 1, "Git View checkbox did not turn back on")
-                wait_for(changed_badges, "Git badges did not return with Git View on")
-                click(300, 170)  # Deleted beta.txt is retained but cannot open.
-                key(28)
-                assert not marker.exists(), "deleted tracked file was opened"
-                key(46, ctrl=True)
-                key(111)
-                key(1)
-                # Commit only changes metadata; alpha remains on disk unchanged.
-                git("add", "-A")
-                git("commit", "-m", "changes")
-                def clean_badges():
-                    return all(max(pixel) - min(pixel) < 30 for pixel in badges()[:2])
-                wait_for(clean_badges, "Git index/commit did not refresh badges")
-                reveal_git_card()
-                before_branch = git_shot().crop((30, 300, 175, 510)).tobytes()
-                git("checkout", "-b", "feature")
-                wait_for(lambda: git_shot().crop((30, 300, 175, 510)).tobytes() != before_branch,
-                         "branch switch did not refresh Git sidebar")
-                # Worktrees use a .git file, and subfolders inherit repository state.
-                worktree = home / "git-worktree"
-                git("worktree", "add", "-b", "linked", str(worktree))
-                (worktree / "nested").mkdir()
-                (worktree / "nested" / "untracked.txt").write_text("new")
-                key(38, ctrl=True)
-                text(str(worktree / "nested"))
-                key(28)
-                title("nested")
-                wait_for(lambda: (lambda pixel: pixel[1] > pixel[0] + 12)(badges()[0]),
-                         "worktree subfolder did not show untracked status")
-                reveal_git_card()
-                click(75, 345)  # Repository card navigates to the worktree root.
-                title("git-worktree")
-                # The expanded card lists every branch; the last row creates one
-                # and a branch row switches to it.
-                def worktree_branch():
-                    return subprocess.check_output(
-                        ["git", "-C", str(worktree), "branch", "--show-current"],
-                        env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")).decode().strip()
-                assert worktree_branch() == "linked"
-                reveal_git_card()
-                click(75, 488)  # "New branch"
-                text("topic")
-                key(28)
-                wait_for(lambda: worktree_branch() == "topic", "New branch row did not create and switch")
-                reveal_git_card()
-                # Alphabetical: feature, linked, main, topic, upstream, then "New branch".
-                click(75, 376)
-                wait_for(lambda: worktree_branch() == "linked", "branch row did not switch branches")
-                # A folder from an archive or a USB stick brings its .git/config
-                # along: opening it must not run the filter that config names.
-                foreign = home / "foreign-repo"
-                foreign.mkdir()
-                ran = tmp / "foreign-filter-ran"
-                def foreign_git(*args):
-                    subprocess.check_output(
-                        ["git", "-c", "user.name=Files Test", "-c", "user.email=files@example.invalid",
-                         "-c", "commit.gpgsign=false", "-C", str(foreign), *args],
-                        env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null"),
-                        stderr=subprocess.STDOUT)
-                foreign_git("init", "-b", "main")
-                (foreign / "notes.txt").write_text("tracked")
-                foreign_git("add", ".")
-                foreign_git("commit", "-m", "initial")
-                (foreign / ".gitattributes").write_text("* filter=x\n")
-                foreign_git("config", "filter.x.clean", f"sh -c 'touch {ran}; cat'")
-                time.sleep(1.1)
-                (foreign / "notes.txt").touch()  # Stat-dirty: status would compare contents.
-                key(38, ctrl=True)
-                text(str(foreign))
-                key(28)
-                title("foreign-repo")
-                wait_for(lambda: "not showing Git status for" in (tmp / "rediwm-files.log").read_text(),
-                         "Files did not refuse the repository's own filter")
-                time.sleep(.5)
-                assert not ran.exists(), "opening a folder ran its repository's filter command"
-                key(38, ctrl=True)
-                text(str(home))
-                key(28)
-                title("Home")
-                time.sleep(.3)
-                # Leaving Git restores the user's grid preference.
-                assert (tmp / "state/rediwm/files-view").read_bytes()[1] == 0
-                click(250, 130)
-                key(28)
-                title("Archive renamed")
-                key(105, alt=True)
-                title("Home")
-                print("Git badges, deleted rows, live commits/branches, worktrees and view restoration passed.")
+                    title("git-project")
+                    time.sleep(.5)
+
+                    from PIL import Image
+                    def git_shot():
+                        shot = tmp / "git.png"
+                        shot.unlink(missing_ok=True)
+                        action('screenshot', {"path": str(shot)})
+                        box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
+                        with Image.open(shot) as full:
+                            return full.convert("RGB").crop((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
+
+                    def reveal_git_card():
+                        # The Git card is the last sidebar section; scroll it into view.
+                        box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
+                        action('move_cursor', {"x": box["x"] + 100, "y": box["y"] + 300})
+                        action('scroll', {"dx": 0, "dy": -1200})
+                        time.sleep(.8)
+
+                    def badges(offset=190):
+                        image = git_shot()
+                        # List cell ends at width-34; Git defaults to 164px.
+                        x = image.width - offset
+                        return [image.getpixel((x, 140 + row * 32)) for row in range(3)]
+
+                    def changed_badges():
+                        modified, deleted, added = badges()
+                        return modified[1] > modified[0] + 12 and deleted[0] > deleted[1] + 12 and added[1] > added[0] + 12
+                    wait_for(changed_badges, "Git M/D/A badges did not appear")
+                    # Both line-count colours appear beside M: staged and working
+                    # changes combine into +28 -3, rather than double counting.
+                    def count_pixels(image, row=0):
+                        return image.crop((image.width - 160, 128 + row * 32,
+                                           image.width - 40, 152 + row * 32)).tobytes()
+                    raw = count_pixels(git_shot())
+                    pixels = zip(raw[0::3], raw[1::3], raw[2::3])
+                    assert any(g > r + 40 and g > b + 25 for r, g, b in pixels), "added-line count missing"
+                    pixels = zip(raw[0::3], raw[1::3], raw[2::3])
+                    assert any(r > g + 40 and r > b + 25 for r, g, b in pixels), "removed-line count missing"
+                    assert not diff_ran.exists(), "line counts ran a repository's diff helper"
+                    # Header divider moves the Git badge with it and never sorts.
+                    image = git_shot()
+                    box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
+                    divider = image.width - 198
+                    action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
+                    action('pointer_button', {"button": 272, "pressed": True})
+                    action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 160})
+                    action('pointer_button', {"button": 272, "pressed": False})
+                    wait_for(lambda: (lambda p: p[1] > p[0] + 12)(git_shot().getpixel((image.width - 238, 140))),
+                             "Name/Git divider did not resize the columns")
+                    action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 110})
+                    action('pointer_button', {"button": 272, "pressed": True})
+                    action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
+                    action('pointer_button', {"button": 272, "pressed": False})
+                    wait_for(changed_badges, "Git columns did not resize back")
+                    # Content edits refresh just the counts as well as the status.
+                    counts_before = count_pixels(git_shot())
+                    (repo / "alpha.txt").write_text("modified\n" * 29)
+                    wait_for(lambda: count_pixels(git_shot()) != counts_before, "line counts did not refresh after editing")
+                    (repo / "alpha.txt").write_text("modified\n" * 28)
+                    wait_for(lambda: count_pixels(git_shot()) == counts_before, "line counts did not return after editing")
+                    # No folder row precedes the files (they would push the badges down), and the
+                    # nested file is the fourth row, labelled with its path from the folder.
+                    def nested_row():
+                        image = git_shot()
+                        badge = image.getpixel((image.width - 190, 140 + 3 * 32))
+                        return badge[1] > badge[0] + 12, image.crop((250, 140 + 3 * 32 - 12, 700, 140 + 3 * 32 + 12)).tobytes()
+                    assert nested_row()[0], "nested changed file was not listed flat"
+                    with_path = nested_row()[1]
+                    def toggle_full_paths():
+                        click(900, 62)  # Filter: folders only, hidden, changed files, full paths
+                        for _ in range(3):
+                            key(108)
+                        key(28)
+                    toggle_full_paths()
+                    wait_for(lambda: nested_row()[1] != with_path, "Show full paths did not change the Name column")
+                    toggle_full_paths()
+                    wait_for(lambda: nested_row()[1] == with_path, "Show full paths did not return")
+                    reveal_git_card()
+                    image = git_shot()
+                    # Empty points in the Git section use the plain sidebar surface.
+                    assert image.getpixel((12, 345)) == image.getpixel((5, 345)), "Git sidebar still has its red bar"
+                    assert image.getpixel((170, 345)) == image.getpixel((5, 345)), "Git sidebar still has its red highlight"
+                    if preview := os.environ.get("REDIWM_FILES_GIT_PREVIEW"):
+                        git_shot().save(preview)
+                    # The Git View checkbox, left of the view buttons, shows the
+                    # repository as an ordinary folder when off and remembers that.
+                    prefs = tmp / "state/rediwm/files-view"
+                    checkbox_x = git_shot().width - 380
+                    click(checkbox_x, 62)
+                    wait_for(lambda: prefs.read_bytes()[4] == 0, "Git View checkbox did not turn off")
+                    wait_for(lambda: all(max(pixel) - min(pixel) < 30 for pixel in badges(offset=90)),
+                             "Git badges stayed with Git View off")
+                    click(checkbox_x, 62)
+                    wait_for(lambda: prefs.read_bytes()[4] == 1, "Git View checkbox did not turn back on")
+                    wait_for(changed_badges, "Git badges did not return with Git View on")
+                    click(300, 170)  # Deleted beta.txt is retained but cannot open.
+                    key(28)
+                    assert not marker.exists(), "deleted tracked file was opened"
+                    key(46, ctrl=True)
+                    key(111)
+                    key(1)
+                    # Commit only changes metadata; alpha remains on disk unchanged.
+                    git("add", "-A")
+                    git("commit", "-m", "changes")
+                    def clean_badges():
+                        return all(max(pixel) - min(pixel) < 30 for pixel in badges()[:2])
+                    wait_for(clean_badges, "Git index/commit did not refresh badges")
+                    reveal_git_card()
+                    before_branch = git_shot().crop((30, 300, 175, 510)).tobytes()
+                    git("checkout", "-b", "feature")
+                    wait_for(lambda: git_shot().crop((30, 300, 175, 510)).tobytes() != before_branch,
+                             "branch switch did not refresh Git sidebar")
+                    # Worktrees use a .git file, and subfolders inherit repository state.
+                    worktree = home / "git-worktree"
+                    git("worktree", "add", "-b", "linked", str(worktree))
+                    (worktree / "nested").mkdir()
+                    (worktree / "nested" / "untracked.txt").write_text("new")
+                    key(38, ctrl=True)
+                    text(str(worktree / "nested"))
+                    key(28)
+                    title("nested")
+                    wait_for(lambda: (lambda pixel: pixel[1] > pixel[0] + 12)(badges()[0]),
+                             "worktree subfolder did not show untracked status")
+                    reveal_git_card()
+                    click(75, 345)  # Repository card navigates to the worktree root.
+                    title("git-worktree")
+                    # The expanded card lists every branch; the last row creates one
+                    # and a branch row switches to it.
+                    def worktree_branch():
+                        return subprocess.check_output(
+                            ["git", "-C", str(worktree), "branch", "--show-current"],
+                            env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")).decode().strip()
+                    assert worktree_branch() == "linked"
+                    reveal_git_card()
+                    click(75, 488)  # "New branch"
+                    text("topic")
+                    key(28)
+                    wait_for(lambda: worktree_branch() == "topic", "New branch row did not create and switch")
+                    reveal_git_card()
+                    # Alphabetical: feature, linked, main, topic, upstream, then "New branch".
+                    click(75, 376)
+                    wait_for(lambda: worktree_branch() == "linked", "branch row did not switch branches")
+                    # A folder from an archive or a USB stick brings its .git/config
+                    # along: opening it must not run the filter that config names.
+                    foreign = home / "foreign-repo"
+                    foreign.mkdir()
+                    ran = tmp / "foreign-filter-ran"
+                    def foreign_git(*args):
+                        subprocess.check_output(
+                            ["git", "-c", "user.name=Files Test", "-c", "user.email=files@example.invalid",
+                             "-c", "commit.gpgsign=false", "-C", str(foreign), *args],
+                            env=dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null"),
+                            stderr=subprocess.STDOUT)
+                    foreign_git("init", "-b", "main")
+                    (foreign / "notes.txt").write_text("tracked")
+                    foreign_git("add", ".")
+                    foreign_git("commit", "-m", "initial")
+                    (foreign / ".gitattributes").write_text("* filter=x\n")
+                    foreign_git("config", "filter.x.clean", f"sh -c 'touch {ran}; cat'")
+                    time.sleep(1.1)
+                    (foreign / "notes.txt").touch()  # Stat-dirty: status would compare contents.
+                    key(38, ctrl=True)
+                    text(str(foreign))
+                    key(28)
+                    title("foreign-repo")
+                    wait_for(lambda: "not showing Git status for" in (tmp / "rediwm-files.log").read_text(),
+                             "Files did not refuse the repository's own filter")
+                    time.sleep(.5)
+                    assert not ran.exists(), "opening a folder ran its repository's filter command"
+                    key(38, ctrl=True)
+                    text(str(home))
+                    key(28)
+                    title("Home")
+                    time.sleep(.3)
+                    # Leaving Git restores the user's grid preference.
+                    assert (tmp / "state/rediwm/files-view").read_bytes()[1] == 0
+                    click(250, 130)
+                    key(28)
+                    title("Archive renamed")
+                    key(105, alt=True)
+                    title("Home")
+                    print("Git badges, deleted rows, live commits/branches, worktrees and view restoration passed.")
+
+                else:
+                    print("SKIP: Git integration disabled in production")
 
                 # Archive browsing shares Files navigation, without unpacking on entry.
                 archive_dir = tmp / "archive-check"

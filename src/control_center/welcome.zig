@@ -8,12 +8,13 @@ const Server = @import("../Server.zig");
 const gpa = @import("../main.zig").gpa;
 const W = ui.layout.Widget;
 const A = std.mem.Allocator;
+const LayoutChoice = enum { classic, canvas, tiling };
 
 pub const State = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     idle: ?*wl.EventSource = null,
     footer: W = .{ .kind = .container },
-    action: enum { classic, tiling, scale, finish, settings } = .finish,
+    action: union(enum) { layout: LayoutChoice, scale, finish, settings } = .finish,
     scale: ?f32 = null,
     browsers: []const []const u8 = &.{},
     terminals: []const []const u8 = &.{},
@@ -68,18 +69,39 @@ fn text(value: []const u8, size: f32, dim: bool) W {
 fn group(a: A, direction: ui.layout.Direction, children: []const W) !W {
     return .{ .kind = .container, .direction = direction, .gap = 12, .@"align" = .stretch, .width = .{ .flex = 1 }, .children = try a.dupe(W, children) };
 }
-fn choice(cc: *panel.ControlCenter, a: A, tiling: bool) !W {
+fn choice(cc: *panel.ControlCenter, a: A, layout: LayoutChoice) !W {
     const t = panel.palette();
-    const selected = cc.server.config.compositor.desktop_mode.tiled() == tiling;
+    const mode = cc.server.config.compositor.desktop_mode;
+    const selected = switch (layout) {
+        .classic => mode == .classic,
+        .canvas => mode == .canvas,
+        .tiling => mode.tiled(),
+    };
     var result = try group(a, .column, &.{
-        .{ .kind = .container, .height = .{ .fixed = if (compact(cc)) 76 else 126 }, .underlay = .{ .owner = cc, .paint = if (tiling) paintTiles else paintStack } },
-        text(if (tiling) i18n.tr("Tiling") else i18n.tr("Classic (stacking)"), 18, false),
-        text(if (tiling) i18n.tr("Arrange windows automatically.") else i18n.tr("Move, resize and overlap windows."), 13, true),
+        .{ .kind = .container, .height = .{ .fixed = if (compact(cc)) 76 else 126 }, .underlay = .{ .owner = cc, .paint = switch (layout) {
+            .classic => paintStack,
+            .canvas => paintCanvas,
+            .tiling => paintTiles,
+        } } },
+        text(switch (layout) {
+            .classic => i18n.tr("Classic"),
+            .canvas => i18n.tr("Canvas"),
+            .tiling => i18n.tr("Tiling"),
+        }, 18, false),
+        text(switch (layout) {
+            .classic => i18n.tr("Move, resize and overlap windows."),
+            .canvas => i18n.tr("Pan and zoom the canvas."),
+            .tiling => i18n.tr("Arrange windows automatically."),
+        }, 13, true),
     });
-    result.name = if (tiling) "welcome_tiling" else "welcome_classic";
+    result.name = switch (layout) {
+        .classic => "welcome_classic",
+        .canvas => "welcome_canvas",
+        .tiling => "welcome_tiling",
+    };
     result.kind = .{ .row = .{
         .owner = cc,
-        .id = @intFromBool(tiling),
+        .id = @backingInt(layout),
         .on_click = layoutClicked,
         .selected = selected,
         .background = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = if (selected) 2 else 1, .border_color = if (selected) t.accent else t.app_item_border, .relief = t.settings_card_relief },
@@ -138,7 +160,7 @@ fn tree(cc: *panel.ControlCenter, a: A) !W {
     var root = try group(a, .column, &.{
         heading,
         text(i18n.tr("Choose your window layout"), 18, false),
-        try group(a, if (narrow) .column else .row, &.{ try choice(cc, a, false), try choice(cc, a, true) }),
+        try group(a, if (narrow) .column else .row, &.{ try choice(cc, a, .classic), try choice(cc, a, .canvas), try choice(cc, a, .tiling) }),
         .{ .kind = .{ .rect = .{ .color = panel.palette().border_soft } }, .height = .{ .fixed = 1 } },
         text(i18n.tr("Default apps"), 18, false),
         apps,
@@ -237,7 +259,7 @@ fn scaleChanged(owner: ?*anyopaque, _: usize, index: usize) void {
 }
 fn layoutClicked(owner: ?*anyopaque, id: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    cc.welcome.action = if (id == 0) .classic else .tiling;
+    cc.welcome.action = .{ .layout = @fromBackingInt(@intCast(id)) };
     schedule(cc);
 }
 fn finishClicked(owner: ?*anyopaque, id: usize) void {
@@ -266,7 +288,11 @@ fn apply(cc: *panel.ControlCenter) void {
             };
             return;
         },
-        .classic, .tiling => @import("../config_runtime/workspace_controls.zig").mode(cc.server, if (cc.welcome.action == .tiling) cc.server.world.workspaces.last_tiled else .canvas, true) catch |err| {
+        .layout => |layout| @import("../config_runtime/workspace_controls.zig").mode(cc.server, switch (layout) {
+            .classic => .classic,
+            .canvas => .canvas,
+            .tiling => cc.server.world.workspaces.last_tiled,
+        }, true) catch |err| {
             std.log.warn("could not save welcome layout: {}", .{err});
             cc.welcome.message = i18n.tr("Could not save your layout. Please try again.");
         },
@@ -299,6 +325,15 @@ fn paintStack(_: ?*anyopaque, widget: *const W, renderer: *ui.paint.Renderer) vo
     miniWindow(r, x + w * 0.25, y, w * 0.64, 82, false);
     miniWindow(r, x, y + 22, w * 0.62, 84, false);
     miniWindow(r, x + w * 0.34, y + 40, w * 0.66, 86, true);
+}
+fn paintCanvas(owner: ?*anyopaque, widget: *const W, renderer: *ui.paint.Renderer) void {
+    paintStack(owner, widget, renderer);
+    const t = panel.palette();
+    const x = widget.computed_x + widget.computed_width - 48;
+    const y = widget.computed_y + widget.computed_height - 32;
+    renderer.fillRect(x, y, 46, 30, .{ .color = t.app_sidebar, .radius = 4, .border_width = 1, .border_color = t.border });
+    renderer.fillRect(x + 4, y + 10, 16, 12, .{ .color = t.app_item_border, .radius = 2 });
+    renderer.fillRect(x + 15, y + 5, 22, 17, .{ .color = t.app_item, .radius = 2, .border_width = 1, .border_color = t.accent });
 }
 fn paintTiles(_: ?*anyopaque, widget: *const W, renderer: *ui.paint.Renderer) void {
     const factor = widget.computed_height / 126;

@@ -338,6 +338,14 @@ def test_appearance_settings():
                 assert effects["window_resize"]["enabled"] is True
                 assert effects["window_minimize"]["enabled"] is False, effects
                 assert [ui.scroll_into_view(n).get("on") for n in names] == [True, True, False]
+                click_widget(ui.scroll_into_view("effect_window_minimize"))
+                click_widget(ui.scroll_into_view("effect_window_move"))
+                effects = read_config()["effects"]
+                assert effects["window_move"]["enabled"] is False
+                assert effects["window_resize"]["enabled"] is True
+                assert effects["window_minimize"]["enabled"] is True
+                ipc.reload_config()
+                assert [ui.scroll_into_view(n).get("on") for n in names] == [False, True, True]
                 for name in names:
                     if ui.scroll_into_view(name).get("on"):
                         click_widget(ui.scroll_into_view(name))

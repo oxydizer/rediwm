@@ -210,6 +210,8 @@ pub const App = struct {
     /// Set when a file menu opens in the Trash: whether Restore applies.
     trash_restorable: bool = false,
     file_menu_actions: [@typeInfo(app_model.FileAction).@"enum".field_names.len]app_model.FileAction = undefined,
+    opened_file_actions: [@typeInfo(app_model.FileAction).@"enum".field_names.len]app_model.FileAction = undefined,
+    opened_file_action_count: ?usize = null,
     file_menu_labels: [12][]const u8 = undefined,
     menu_label_text: [9][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
@@ -603,7 +605,7 @@ pub const App = struct {
             if (self.sidebar_requested != null and self.w >= 500) self.syncSidebarWidth();
             self.clampScroll();
             self.clampSidebarScroll();
-            if (self.menu) |kind| self.openMenu(kind, self.menu_x, self.menu_y);
+            if (self.validatedMenuCount() != 0) self.openMenu(self.menu.?, self.menu_x, self.menu_y);
             self.invalidate();
         }
     }
@@ -1138,6 +1140,8 @@ pub const App = struct {
     pub const placeActions = app_menu.placeActions;
     pub const menuLabels = app_menu.menuLabels;
     pub const openMenu = app_menu.openMenu;
+    pub const dismissMenu = app_menu.dismissMenu;
+    pub const validatedMenuCount = app_menu.validatedMenuCount;
     pub const menuHit = app_menu.menuHit;
     pub const runMenu = app_menu.runMenu;
     pub const renderMenu = app_menu.renderMenu;

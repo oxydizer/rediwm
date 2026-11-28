@@ -180,6 +180,7 @@ pub fn setPinKind(self: *App, path: []const u8, kind: pins_mod.Kind) bool {
     const pin = &self.pins.items.items[index];
     if (pin.kind == kind) return false;
     pin.kind = kind;
+    if (self.menu == .sidebar and self.menu_place == pin_base + index) self.dismissMenu();
     return true;
 }
 
@@ -419,6 +420,7 @@ pub fn savePins(self: *App) void {
 pub fn reloadPins(self: *App) void {
     const file = self.pins_path orelse return;
     var fresh = loadPins(self, file);
+    if (self.menu == .sidebar or self.menu == .device) self.dismissMenu();
     std.mem.swap(pins_mod.List, &self.pins, &fresh);
     fresh.deinit(self.allocator);
 }
@@ -435,7 +437,7 @@ fn loadPins(self: *App, file: []const u8) pins_mod.List {
 
 /// Rows moved: nothing indexed by one may outlive this.
 pub fn pinsChanged(self: *App) void {
-    if (self.menu == .sidebar) self.menu = null;
+    if (self.menu == .sidebar or self.menu == .device) self.dismissMenu();
     self.nav_hover = .{};
     self.clampSidebarScroll();
     self.invalidate();
@@ -483,14 +485,16 @@ pub fn drainDevices(self: *App) void {
     // Clear first: anything that lands after is a wake for the next loop.
     monitor.clearWake();
     const changed = monitor.take(self.allocator, &self.device_list) catch false;
-    if (changed) {
-        // Row indices moved: nothing indexed by one may outlive this.
-        if (self.menu == .device) self.menu = null;
-        self.nav_hover = .{};
-        self.clampSidebarScroll();
-        self.invalidate();
-    }
+    if (changed) devicesChanged(self);
     while (monitor.nextResult()) |result| self.deviceResult(&result);
+}
+
+pub fn devicesChanged(self: *App) void {
+    // Row indices can move whenever the device list is replaced.
+    if (self.menu == .device) self.dismissMenu();
+    self.nav_hover = .{};
+    self.clampSidebarScroll();
+    self.invalidate();
 }
 
 pub fn startDeviceOp(self: *App, volume: *const volumes_mod.Volume, unmount: bool, open: bool) void {

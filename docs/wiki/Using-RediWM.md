@@ -9,7 +9,7 @@
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
 | Super+Shift+arrows | tile halves and quarters |
-| Super+Shift+W | switch between Canvas and your last tiled mode |
+| Super+Shift+W | switch between your last stacking and tiled modes |
 | Super+arrows | slide to the neighbouring desktop |
 | Super+Ctrl+arrows | focus the window in that direction |
 | Alt+Tab | window switcher |
@@ -25,19 +25,26 @@
 Everything lives under `[keybinds]` in the config. Set a binding to `"noop"`
 to turn it off.
 
+Choose **Classic** in Settings → Desktop for a fixed desktop with overlapping
+windows. Classic and Canvas share window positions. Classic brings windows
+that are out of reach onto a display and uses a fixed 100% scale.
 Super+Shift+W (`toggle_desktop_mode`) saves the choice as `desktop_mode`.
-Switching back to Canvas restores window positions and zoom. Returning to
-Workspaces or Scrolling restores the tiled layout.
+Returning from a tiled mode restores the stacking layout. Returning to Tiling
+or Scrolling restores the tiled layout.
 Existing configs with their own `[keybinds]` get it unless the key is taken.
 The taskbar's **Desktop mode** item (off by default; turn it on in Settings →
 Appearance) shows the current mode. Left-click it to switch modes, or
-right-click it to choose **Canvas**, **Workspaces** or **Scrolling** from a menu. A checkmark
+right-click it to choose **Classic**, **Canvas**, **Tiling** or **Scrolling** from a menu. A checkmark
 shows which mode is active.
 
 ### Scrolling
 
-Scrolling places each new window in a column to the right of the focused
-column. Each display shows its own workspace. Moving focus along one strip
+Switching to Scrolling arranges open windows along the strip, including
+windows that were snapped, maximized, fullscreen or manually floated.
+Workspace layout overrides and floating app and window rules still apply.
+Returning from Canvas also restores the strip's floating choices.
+New windows open in a column to the right of the focused column.
+Each display shows its own workspace. Moving focus along one strip
 scrolls that display, and its windows and menus stop at the display edge.
 Floating windows stay in place.
 Settings → Desktop lets you change the initial column width, centring, and
@@ -53,7 +60,7 @@ Reconnecting it returns its strip and restores each display's workspace selectio
 
 | Shortcut | Action in a scrolling workspace |
 | --- | --- |
-| Super+Left / Right | Focus the previous or next column |
+| Super+Left / Right | Focus the previous or next column; a maximized or fullscreen window keeps its place in that order |
 | Super+Up / Down | Focus another window in the column |
 | Super+Shift+arrows | Reorder columns or windows within a column |
 | Super+Ctrl+arrows | Adjust column width or window height in 32 px steps |

@@ -175,28 +175,22 @@ pub fn accept(self: *Self, world: *World) void {
     var target = self.saved orelse return;
     if (self.returning) return;
     const top = find(world, self.selected) orelse return self.dismiss(world);
-    // The strip jumps to the window; the zoom back carries it there.
     if (self.strip != 0) {
         @import("../scroll_tiling.zig").jumpTo(top);
-        self.activate = top.id;
-        self.returning = true;
-        self.spread.retargetTo(anim.nowMs(), 0, anim.curveFor(.camera_zoom));
-        self.transition(world, target);
-        return;
-    }
-    const mode = world.server.config.compositor.focus_zoom;
-    const floating = top.layout() == .floating and !top.isFullscreen();
-    // Camera-focus windows live at different depths. Visiting one must use
-    // its depth, or the restored camera can pass it and make it invisible.
-    if (mode == .camera and floating) {
-        target.zoom_value = 1 / top.zoom_scale;
-        target.focus_zoom = target.zoom_value;
-        target.zoom_limit = @max(1, target.zoom_value);
-    }
-    const scale = if (mode == .boost and floating) 1 / target.zoom() else top.zoom_scale;
-    if (world.windowFocusOffset(top, self.output.?, target, scale, true)) |offset| {
-        target.offset_x = offset.x;
-        target.offset_y = offset.y;
+    } else if (world.workspaces.mode == .canvas) {
+        const mode = world.server.config.compositor.focus_zoom;
+        const floating = top.layout() == .floating and !top.isFullscreen();
+        // Return to the selected window's depth in camera-focus mode.
+        if (mode == .camera and floating) {
+            target.zoom_value = 1 / top.zoom_scale;
+            target.focus_zoom = target.zoom_value;
+            target.zoom_limit = @max(1, target.zoom_value);
+        }
+        const scale = if (mode == .boost and floating) 1 / target.zoom() else top.zoom_scale;
+        if (world.windowFocusOffset(top, self.output.?, target, scale, true)) |offset| {
+            target.offset_x = offset.x;
+            target.offset_y = offset.y;
+        }
     }
     self.activate = top.id;
     self.returning = true;

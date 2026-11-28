@@ -44,7 +44,7 @@ pub fn patchMode(a: std.mem.Allocator, original: []const u8, binds: []const keys
     for (binds, 0..) |old, i| {
         if (i != index and keys.pack(old.modifiers, old.sym) == keys.pack(replacement.modifiers, replacement.sym)) continue;
         const bind = if (i == index) replacement else old;
-        if (mode == .canvas and bind.action == .noop and !isInherited(defaults.activeKeybinds(), bind)) continue;
+        if (!mode.tiled() and bind.action == .noop and !isInherited(defaults.activeKeybinds(), bind)) continue;
         const key = try format(a, bind);
         defer a.free(key);
         // Match the loader: quoted action contents are literal, without unescaping.
@@ -153,7 +153,7 @@ test "moving Files restores ordinary keys and removes obsolete non-inherited noo
 }
 
 test "editing workspace defaults preserves canvas bindings and masks the previous key" {
-    inline for (.{ loader.DesktopMode.workspaces, loader.DesktopMode.scrolling }) |mode| {
+    inline for (.{ loader.DesktopMode.tiling, loader.DesktopMode.scrolling }) |mode| {
         try checkWorkspaceEdit(mode);
     }
 }

@@ -28,10 +28,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         self.text_dragging = false;
         self.scroll_drag.end();
         self.sidebar_scroll_drag.end();
-        if (self.menu != null) {
-            self.menu = null;
-            self.invalidate();
-        }
+        self.dismissMenu();
         if (button == 0x113 or button == 0x116) self.back() else self.forward();
         return;
     }
@@ -94,8 +91,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                 return;
             }
         }
-        self.menu = null;
-        self.invalidate();
+        self.dismissMenu();
         if (button == 0x110) return;
     }
     if (button == 0x110 and self.inlineTorrentClick(x, y)) return;

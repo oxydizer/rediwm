@@ -102,7 +102,20 @@ both the drawer and the app's single-line fields (search, location bar, dialog
 fields, chooser name); `app_terminal.zig` only owns the drawer's preedit.
 Support and limits are in `docs/files-terminal.md`;
 `zig build test-files-terminal` runs isolated PTY and headless fixtures. The
-pinned library is compiled only into Files/tests.
+pinned library is compiled only into Files, RediTerm and tests.
+
+RediTerm (`src/rediterm/`, `rediwm-terminal`) is the same engine in its own
+window: `paint.zig` (cells, cursor, palette, metrics, selection text) serves
+both, and `engine.c`/`child.c` changes reach both. It starts the shell without
+the Bash plugin (no following), or `-e` argv through `ft_start_command`
+(`child.c --command`); it shows the OSC 0/2 title (`ft_title`), which Files
+ignores. `tests/terminal.py`.
+RediTerm repaints only what changed (`App.frameDamage`): rows from
+`ft_take_damage` (libvterm damage merged per row; the whole view while
+scrolled back), the caret's old and new boxes (so a glide repaints two
+cells) and selection changes. Anything else it draws differently must set
+`App.damage`. Files still repaints on `ft_changed`. Partial repaints are
+checked against a forced full repaint by screenshot, at 1, 1.6 and 2.
 
 * Poll slots 19–21 are PTY, integration socket and pidfd. Parsing/writes have a
   64 KiB budget per loop; POLLOUT is enabled only with queued work. Hidden
@@ -119,7 +132,10 @@ pinned library is compiled only into Files/tests.
   session members have been signaled through pidfds and it can be reaped.
 * Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
   separately so fallback shaping cannot move later cells. Preserve the
-  caller's Cairo damage clip. The test encoder drain exists only with FT_TEST.
+  caller's Cairo damage clip; `paintCells` skips rows and runs outside it
+  (`ClipRects`) and snaps cell fills and clips to device pixels
+  (`pixelRect`), which keeps the clip a pixel region (a fractional one is a
+  slow mask). The test encoder drain exists only with FT_TEST.
 
 ## Text input
 

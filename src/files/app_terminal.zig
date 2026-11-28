@@ -205,12 +205,10 @@ pub fn terminalStep(self: *App, now: i64) void {
     }
     self.terminal.active = !self.terminal.glide.settled(now);
     if (self.terminal.session) |session| {
-        const size = ui.cairo.textSize();
-        const scale: f32 = @floatFromInt(self.scale);
-        self.terminal.cell_w = @max(1, ui.text.measureWidthF("M", .mono, size, scale) catch 9);
-        const metrics = ui.text.verticalMetrics(.mono, size, scale) catch null;
-        self.terminal.ascent = if (metrics) |m| m.ascent else size;
-        self.terminal.cell_h = @ceil(if (metrics) |m| m.ascent + m.descent + 2 else size + 5);
+        const metrics = @import("terminal/paint.zig").Metrics.measure(@floatFromInt(self.scale));
+        self.terminal.cell_w = metrics.cell_w;
+        self.terminal.ascent = metrics.ascent;
+        self.terminal.cell_h = metrics.cell_h;
         const body = self.terminalBody();
         // During a slide, use the final height and clip to the moving boundary;
         // no intermediate 0-row PTYs and no sequence of reflowing prompts.
@@ -226,16 +224,55 @@ pub fn terminalStep(self: *App, now: i64) void {
         if (focused != self.terminal.focused) {
             self.terminal.focused = focused;
             tc.ft_focus(session, focused);
+            self.terminalDamage(); // The cursor shows only while focused.
         }
         if (self.terminal.generation != self.theme_cfg.generation) {
             @import("terminal/render.zig").applyPalette(session);
             self.terminal.generation = self.theme_cfg.generation;
+            self.terminalDamage();
         }
         const bar = self.terminalScrollbar();
         const hovered = if (bar) |b| self.dialog == null and b.overThumb(@floatCast(self.mouse_x), @floatCast(self.mouse_y)) else false;
         if (self.terminal.bar.step(now, self.terminal.observed_offset != tc.ft_offset(session), hovered, self.terminal.scroll_drag.active, self.terminal.visible and bar != null)) self.terminalDamage();
         self.terminal.observed_offset = tc.ft_offset(session);
-        if (tc.ft_changed(session)) self.terminalDamage();
+        if (tc.ft_changed(session)) terminalChanged(self, session);
+    }
+}
+/// What a terminal change repaints: the rows the engine changed, the header
+/// when its label or controls change and the scrollbar when history grows;
+/// the whole drawer when the engine asks (resize, history view, alternate
+/// screen). `paintCells` skips the rows outside the damage.
+fn terminalChanged(self: *App, session: *tc.FT) void {
+    var rows: [512]u8 = undefined;
+    const count: usize = @intCast(std.math.clamp(tc.ft_rows(session), 0, rows.len));
+    const all = tc.ft_take_damage(session, &rows, @intCast(count));
+    var label_buffer: [4608]u8 = undefined;
+    var hash = std.hash.Wyhash.init(0);
+    hash.update(@import("terminal/render.zig").terminalLabel(self, &label_buffer));
+    hash.update(if (self.terminalRestartable()) "restart" else "");
+    const label = hash.final();
+    const history = tc.ft_history(session);
+    defer {
+        self.terminal.painted_label = label;
+        self.terminal.observed_history = history;
+    }
+    if (self.terminalHeight() <= 0) return;
+    if (all) return self.terminalDamage();
+    const rect = self.terminalRect();
+    if (label != self.terminal.painted_label) self.addDamage(.{ .x = rect.x, .y = rect.y, .w = rect.w, .h = header_height });
+    const body = self.terminalBody();
+    if (history != self.terminal.observed_history) self.addDamage(.{ .x = body.x + body.w, .y = body.y - 1, .w = rect.x + rect.w - body.x - body.w, .h = body.h + 2 });
+    const ch = self.terminal.cell_h;
+    var row: usize = 0;
+    while (row < count) {
+        if (rows[row] == 0) {
+            row += 1;
+            continue;
+        }
+        const first = row;
+        while (row < count and rows[row] != 0) row += 1;
+        const top = body.y + @as(f64, @floatFromInt(first)) * ch;
+        self.addDamage(.{ .x = body.x - 1, .y = top - 1, .w = body.w + 2, .h = @as(f64, @floatFromInt(row - first)) * ch + 2 });
     }
 }
 pub fn terminalDamage(self: *App) void {
@@ -297,34 +334,10 @@ pub fn terminalModifiers(self: *App) c_int {
 pub fn terminalCopy(self: *App) void {
     const session = self.terminal.session orelse return;
     const selection = self.terminal.selection orelse return;
-    const ends = selection.ordered();
-    var bytes: std.ArrayList(u8) = .empty;
-    defer bytes.deinit(self.allocator);
-    var line = @max(ends[0].line, tc.ft_line(session) - tc.ft_history(session));
-    const last_line = @min(ends[1].line, tc.ft_line(session) + tc.ft_rows(session) - 1);
-    while (line <= last_line) : (line += 1) {
-        const start = if (line == ends[0].line) ends[0].col else 0;
-        const end = if (line == ends[1].line) ends[1].col else tc.ft_cols(session);
-        const begin = bytes.items.len;
-        var col = start;
-        while (col < end) : (col += 1) {
-            var cell: tc.FT_Cell = undefined;
-            if (!tc.ft_cell_at(session, line, col, &cell) or cell.width == 0) continue;
-            if (cell.chars[0] == 0) bytes.append(self.allocator, ' ') catch return else for (cell.chars) |ch| {
-                if (ch == 0 or ch == std.math.maxInt(u32)) break;
-                var encoded: [4]u8 = undefined;
-                const len = std.unicode.utf8Encode(@intCast(ch), &encoded) catch continue;
-                bytes.appendSlice(self.allocator, encoded[0..len]) catch return;
-            }
-            if (bytes.items.len > 1024 * 1024 - 32) return;
-        }
-        if (!tc.ft_wrapped_at(session, line)) {
-            while (bytes.items.len > begin and bytes.items[bytes.items.len - 1] == ' ') _ = bytes.pop();
-            if (line < last_line) bytes.append(self.allocator, '\n') catch return;
-        }
-    }
+    const bytes = @import("terminal/paint.zig").selectionText(self.allocator, session, selection) catch return;
+    defer self.allocator.free(bytes);
     self.clipboard_text.clearRetainingCapacity();
-    self.clipboard_text.appendSlice(self.allocator, bytes.items) catch return;
+    self.clipboard_text.appendSlice(self.allocator, bytes) catch return;
     self.clearClipboard();
     self.clipboard_cut = false;
     self.clipboard_is_text = true;

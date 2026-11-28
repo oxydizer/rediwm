@@ -404,7 +404,7 @@ def ui_tests(tmp, home, env):
             key(62)
             state = tmp / 'state/rediwm/files-view'
             wait_for(lambda: state.exists(), 'drawer height saved')
-            assert state.read_bytes()[0:1] == b'4'
+            assert state.read_bytes()[0:1] == b'5'
             # Hidden drawer is idle. Check all Files and shell threads together.
             time.sleep(.8)
             before = task_switches(first.pid) + task_switches(shell)
@@ -419,7 +419,7 @@ def ui_tests(tmp, home, env):
             assert Path(f'/proc/{shell}').exists(), 'minimize/restore replaced the session'
             # Switching workspaces keeps an open drawer's session alive through
             # the slide and the size changes on entering/leaving tiled mode.
-            ipc.action('set_desktop_mode', {'mode': 'workspaces', 'persist': False})
+            ipc.action('set_desktop_mode', {'mode': 'tiling', 'persist': False})
             ipc.wait_for('window_geometry_settled', window_id=ident)
             current_workspace = next(w['id'] for w in ipc.get_workspaces() if w['is_focused'])
             switched = home / 'workspace-output'

@@ -48,6 +48,8 @@ install -Dm644 "$release_dir/share/applications/rediwm-monitor.desktop" "${datad
 install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-monitor.svg" "${datadir}/icons/hicolor/scalable/apps/rediwm-monitor.svg"
 install -Dm644 "$release_dir/share/applications/rediwm-calculator.desktop" "${datadir}/applications/rediwm-calculator.desktop"
 install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-calculator.svg" "${datadir}/icons/hicolor/scalable/apps/rediwm-calculator.svg"
+install -Dm644 "$release_dir/share/applications/rediwm-terminal.desktop" "${datadir}/applications/rediwm-terminal.desktop"
+install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-terminal.svg" "${datadir}/icons/hicolor/scalable/apps/rediwm-terminal.svg"
 install -Dm644 "$release_dir/share/applications/rediwm-editor.desktop" "${datadir}/applications/rediwm-editor.desktop"
 install -Dm644 "$release_dir/share/applications/rediwm-pdf.desktop" "${datadir}/applications/rediwm-pdf.desktop"
 install -Dm644 "$release_dir/share/applications/rediwm-player.desktop" "${datadir}/applications/rediwm-player.desktop"

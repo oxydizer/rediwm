@@ -17,10 +17,10 @@ pub fn chooseMode(server: *Server, value: config.loader.DesktopMode) void {
         mode(server, value, false) catch unreachable;
     };
 }
-/// Canvas, or back to the tiled mode used last, as it was left.
+/// Return to the last stacking or tiled mode.
 pub fn toggleMode(server: *Server) void {
     const manager = &server.world.workspaces;
-    chooseMode(server, if (manager.active) .canvas else manager.last_tiled);
+    chooseMode(server, if (manager.active) manager.last_stacking else manager.last_tiled);
 }
 pub fn gap(server: *Server, value: u32, persist: bool) !void {
     if (value > 512) return error.InvalidGap;
@@ -46,13 +46,17 @@ pub fn layout(server: *Server, id: u8, value: ?config.workspace_layout.Layout) v
     if (server.input.tiling_grab) |grab| if (grab.workspace == id) server.input.finishTilingGrab(false);
     var transaction = @import("../layout_undo.zig").Transaction.begin(server, &.{id});
     defer transaction.finish();
-    const slot = &server.world.workspaces.slots[id - 1];
+    const manager = &server.world.workspaces;
+    const previous = manager.layoutOf(id);
+    const slot = &manager.slots[id - 1];
     if (!slot.exists) {
         slot.exists = true;
         slot.output = server.getDefaultOutput();
         if (slot.output) |out| slot.box = out.usableBox();
     }
     slot.layout = value;
-    server.world.workspaces.tiler.schedule(server);
+    if (previous != .scrolling and manager.layoutOf(id) == .scrolling)
+        @import("../scroll_tiling.zig").arrangeSnapped(server, id);
+    manager.tiler.schedule(server);
     if (server.input.open_control_center) |cc| cc.refresh();
 }
