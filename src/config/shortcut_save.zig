@@ -174,12 +174,22 @@ fn patchBindings(a: std.mem.Allocator, original: []const u8, binds: []const keys
 }
 
 pub fn save(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind) !void {
-    return saveMode(a, io, path, binds, index, replacement, .canvas);
+    return saveMode(a, io, path, binds, index, replacement, .canvas, null);
 }
 
-pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, mode: loader.DesktopMode) !void {
+pub const CommandSnapshot = struct {
+    id: []const u8,
+    text: ?[]const u8,
+
+    pub fn matches(snapshot: CommandSnapshot, cfg: *const loader.Config) bool {
+        const current = cfg.shortcut_commands.get(snapshot.id);
+        return if (snapshot.text) |old| current != null and std.mem.eql(u8, old, current.?) else current == null;
+    }
+};
+
+pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, mode: loader.DesktopMode, command: ?CommandSnapshot) !void {
     var changes: [2]keys.Keybind = undefined;
-    return saveChanges(a, io, path, binds, bindingChanges(binds, index, replacement, &changes), mode);
+    return saveChanges(a, io, path, binds, bindingChanges(binds, index, replacement, &changes), mode, command);
 }
 
 pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, mode: loader.DesktopMode, target: ?keys.Action) !void {
@@ -188,10 +198,10 @@ pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []co
     var defaults = try factoryConfig(a, mode);
     defer defaults.deinit();
     const changes = try resetChanges(arena.allocator(), binds, defaults.activeKeybinds(), target);
-    if (changes.len > 0) try saveChanges(a, io, path, binds, changes, mode);
+    if (changes.len > 0) try saveChanges(a, io, path, binds, changes, mode, null);
 }
 
-fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, changes: []const keys.Keybind, mode: loader.DesktopMode) !void {
+fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, changes: []const keys.Keybind, mode: loader.DesktopMode, command: ?CommandSnapshot) !void {
     if (path.len == 0) return error.NoConfigPath;
     const original = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
     defer a.free(original);
@@ -199,6 +209,9 @@ fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []cons
     defer old.deinit();
     old.compositor.desktop_mode = mode;
     if (!sameBindings(old.activeKeybinds(), binds)) return error.ConfigChanged;
+    if (command) |snapshot| {
+        if (!snapshot.matches(&old)) return error.ConfigChanged;
+    }
     for (changes) |bind| {
         if (bind.action == .custom_command and !old.shortcut_commands.contains(bind.action.custom_command)) return error.ConfigChanged;
     }
@@ -216,10 +229,8 @@ pub fn saveCustomCommand(a: std.mem.Allocator, io: std.Io, cfg: *const loader.Co
     const original = try std.Io.Dir.cwd().readFileAlloc(io, path, scratch, .limited(1 << 20));
     var old = try loader.parse(a, original, path);
     defer old.deinit();
-    const actual = old.shortcut_commands.get(id);
-    const expected = cfg.shortcut_commands.get(id);
-    if ((actual == null) != (expected == null) or
-        (actual != null and !std.mem.eql(u8, actual.?, expected.?))) return error.ConfigChanged;
+    const snapshot: CommandSnapshot = .{ .id = id, .text = cfg.shortcut_commands.get(id) };
+    if (!snapshot.matches(&old)) return error.ConfigChanged;
     if (command == null and (!sameBindings(old.keybinds, cfg.keybinds) or
         !sameBindings(old.workspace_keybinds, cfg.workspace_keybinds))) return error.ConfigChanged;
 

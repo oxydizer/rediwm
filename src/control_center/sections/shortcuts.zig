@@ -1,6 +1,9 @@
 const i18n = @import("i18n");
 const std = @import("std");
-const keys = @import("config").keybinds;
+const config_mod = @import("config");
+const keys = config_mod.keybinds;
+const Config = config_mod.loader.Config;
+const DesktopMode = config_mod.loader.DesktopMode;
 const catalogue = @import("shortcut_catalogue.zig");
 const Filter = @import("shortcut_filter.zig").Filter;
 const saving = @import("config").shortcut_save;
@@ -15,9 +18,54 @@ const names = [_]i18n.Message{ i18n.msg("Window Management"), i18n.msg("Canvas &
 const icons = [_]ui.layout.IconId{ .display, .grid, .grid, .document, .volume, .power, .grid, .document, .keyboard };
 const Target = struct {
     action: keys.Action,
-    index: ?usize,
+    chord: ?u64 = null,
+    mode: DesktopMode,
+    command: ?[]const u8 = null,
+
+    fn copy(target: Target, a: std.mem.Allocator) !Target {
+        var owned = target;
+        owned.action = switch (target.action) {
+            .spawn => |str| .{ .spawn = try a.dupe(u8, str) },
+            .save_layout => |str| .{ .save_layout = try a.dupe(u8, str) },
+            .restore_layout => |str| .{ .restore_layout = try a.dupe(u8, str) },
+            .custom_command => |str| .{ .custom_command = try a.dupe(u8, str) },
+            else => target.action,
+        };
+        if (target.command) |str| owned.command = try a.dupe(u8, str);
+        return owned;
+    }
+
+    fn commandSnapshot(target: Target) ?saving.CommandSnapshot {
+        return if (target.action == .custom_command)
+            .{ .id = target.action.custom_command, .text = target.command }
+        else
+            null;
+    }
+
+    fn resolve(target: Target, cfg: *const Config) error{ConfigChanged}!?usize {
+        if (target.mode != cfg.compositor.desktop_mode) return error.ConfigChanged;
+        if (target.commandSnapshot()) |command| {
+            if (!command.matches(cfg)) return error.ConfigChanged;
+        }
+        const chord = target.chord orelse return null;
+        const binds = cfg.activeKeybinds();
+        var i = binds.len;
+        while (i > 0) {
+            i -= 1;
+            const bind = binds[i];
+            if (keys.pack(bind.modifiers, bind.sym) != chord) continue;
+            if (keys.actionEql(bind.action, target.action)) return i;
+            break;
+        }
+        return error.ConfigChanged;
+    }
+
+    fn eql(x: Target, y: Target) bool {
+        if (x.mode != y.mode or x.chord != y.chord or !keys.actionEql(x.action, y.action)) return false;
+        return if (x.command) |body| y.command != null and std.mem.eql(u8, body, y.command.?) else y.command == null;
+    }
 };
-const Pending = union(enum) { record, reset: ?keys.Action, save_command, delete_command };
+const Pending = union(enum) { record, reset: ?Target, save_command, delete_command };
 
 const CommandEditor = struct {
     id: ?[]const u8 = null,
@@ -32,7 +80,10 @@ const CommandEditor = struct {
 };
 
 pub const Section = struct {
+    // Callback targets live with their widget tree. Recording spans rebuilds
+    // and owns a separate copy until it is saved or cancelled.
     arena: std.heap.ArenaAllocator = .init(gpa),
+    editing_arena: std.heap.ArenaAllocator = .init(gpa),
     groups: [names.len + 2]W = undefined,
     group_count: usize = 0,
     search_field: W = .{ .kind = .container },
@@ -48,6 +99,7 @@ pub const Section = struct {
     message: []const u8 = "",
     pending: ?Pending = null,
     confirm_reset: bool = false,
+    rendered_mode: DesktopMode = .canvas,
     held_keycode: ?u32 = null,
     held_sym: xkb.Keysym = .NoSymbol,
     held_mods: wlr.Keyboard.ModifierMask = .{},
@@ -57,6 +109,7 @@ pub const Section = struct {
         if (s.command_field.kind == .text_input) gpa.free(s.command_field.kind.text_input.value);
         if (s.search_field.kind == .text_input) gpa.free(s.search_field.kind.text_input.value);
         s.arena.deinit();
+        s.editing_arena.deinit();
     }
 
     pub fn cancel(s: *Section) void {
@@ -70,6 +123,7 @@ pub const Section = struct {
         s.held_keycode = null;
         s.editing = null;
         s.candidate = null;
+        _ = s.editing_arena.reset(.free_all);
         s.message = "";
     }
 
@@ -114,6 +168,11 @@ pub const Section = struct {
             else => {},
         }
         const target = s.editing orelse return;
+        const index = target.resolve(&cc.server.config) catch {
+            s.cancelRecording();
+            cc.refresh();
+            return;
+        };
         s.held_keycode = keycode;
         s.held_sym = sym;
         s.held_mods = @bitCast(keys.relevantMods(mods));
@@ -126,7 +185,7 @@ pub const Section = struct {
             i -= 1;
             const bind = binds[i];
             if (keys.pack(bind.modifiers, bind.sym) != keys.pack(candidate.modifiers, candidate.sym)) continue;
-            if (i != target.index and bind.action != .noop) {
+            if (i != index and bind.action != .noop) {
                 s.candidate = null;
                 s.message = i18n.tr("Shortcut already in use. Try another.");
             }
@@ -140,8 +199,16 @@ pub const Section = struct {
         s.pending = null;
         const config = &cc.server.config;
         const result = switch (pending) {
-            .record => saving.saveMode(gpa, cc.server.io, config.path, config.activeKeybinds(), (s.editing orelse return).index, s.candidate orelse return, config.compositor.desktop_mode),
-            .reset => |target| saving.saveReset(gpa, cc.server.io, config.path, config.activeKeybinds(), config.compositor.desktop_mode, target),
+            .record => record: {
+                const target = s.editing orelse return;
+                const index = target.resolve(config) catch |err| break :record err;
+                break :record saving.saveMode(gpa, cc.server.io, config.path, config.activeKeybinds(), index, s.candidate orelse return, target.mode, target.commandSnapshot());
+            },
+            .reset => |target| reset: {
+                if (target) |row| _ = row.resolve(config) catch |err| break :reset err;
+                if (s.rendered_mode != config.compositor.desktop_mode) break :reset error.ConfigChanged;
+                break :reset saving.saveReset(gpa, cc.server.io, config.path, config.activeKeybinds(), config.compositor.desktop_mode, if (target) |row| row.action else null);
+            },
             .save_command => s.saveCommand(cc, false),
             .delete_command => s.saveCommand(cc, true),
         };
@@ -177,7 +244,7 @@ pub const Section = struct {
     }
 };
 
-fn nextCommandId(a: std.mem.Allocator, config: *const @import("config").loader.Config) ![]const u8 {
+fn nextCommandId(a: std.mem.Allocator, config: *const Config) ![]const u8 {
     var n: usize = 1;
     while (true) : (n += 1) {
         var buf: [32]u8 = undefined;
@@ -221,6 +288,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     const t = panel.palette();
     const binds = cc.server.config.activeKeybinds();
     const mode = cc.server.config.compositor.desktop_mode;
+    s.rendered_mode = mode;
     var factory = try saving.factoryConfig(a, mode);
     defer factory.deinit();
     const defaults = factory.activeKeybinds();
@@ -251,9 +319,9 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             },
             .{ .kind = .{ .icon = .{ .id = if (expanded) .chevron_down else .chevron_up, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
         }) });
-        if (expanded and g == catalogue.group(.noop)) for (effective, indices, labels) |bind, i, label| {
+        if (expanded and g == catalogue.group(.noop)) for (effective, labels) |bind, label| {
             const title = i18n.tr("Disabled shortcut.");
-            if (bind.action == .noop and !searching) try appendRow(s, cc, a, &rows, title, "", .{ .action = .noop, .index = i }, label, false, false);
+            if (bind.action == .noop and !searching) try appendRow(s, cc, a, &rows, title, "", .{ .action = .noop, .mode = mode }, bind, label, false, false);
         };
         if (expanded) for (actions) |action| {
             if (catalogue.group(action) != g) continue;
@@ -269,19 +337,20 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
                 if (keys.actionEql(bind.action, action) and filter.binding(label)) break true;
             } else false;
             if (!matches) continue;
+            const target = try (Target{ .action = action, .mode = mode, .command = command }).copy(a);
             if (s.command_editor) |*editor| {
                 if (editor.id != null and action == .custom_command and std.mem.eql(u8, editor.id.?, action.custom_command))
                     try rows.append(a, try commandForm(s, cc, a, editor));
             }
             var first = true;
-            for (effective, indices, labels) |bind, i, label| {
+            for (effective, labels) |bind, label| {
                 if (!keys.actionEql(bind.action, action)) continue;
                 const caption = if (first) description else "";
-                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, label, first, first and saving.canReset(effective, defaults, action));
+                try appendRow(s, cc, a, &rows, if (first) title else "", caption, target, bind, label, first, first and saving.canReset(effective, defaults, action));
                 first = false;
             }
-            const adding = if (s.editing) |target| target.index == null and keys.actionEql(target.action, action) else false;
-            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, i18n.tr("Not assigned"), false, first and saving.canReset(effective, defaults, action));
+            const adding = if (s.editing) |active| active.eql(target) else false;
+            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", target, null, i18n.tr("Not assigned"), false, first and saving.canReset(effective, defaults, action));
         };
         if (searching and rows.items.len == 1) continue;
         if (expanded and g == catalogue.group(.{ .custom_command = "" })) {
@@ -354,12 +423,13 @@ fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled
     return .{ .kind = .container, .direction = .column, .@"align" = .start, .gap = 8, .children = widgets.items };
 }
 
-fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, label: []const u8, add: bool, reset: bool) !void {
+fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, action_target: Target, bind: ?keys.Keybind, label: []const u8, add: bool, reset: bool) !void {
     const t = panel.palette();
     const id = s.targets.items.len;
+    var target = action_target;
+    if (bind) |binding| target.chord = keys.pack(binding.modifiers, binding.sym);
     try s.targets.append(a, target);
-    const bind = if (target.index) |i| cc.server.config.activeKeybinds()[i] else null;
-    const editing = if (s.editing) |active| active.index == target.index and keys.actionEql(active.action, target.action) else false;
+    const editing = if (s.editing) |active| active.eql(target) else false;
     const caption = if (editing)
         (if (s.message.len > 0) s.message else i18n.tr("Press keys to record. Esc cancels."))
     else if (description.len == 0 and bind != null and bind.?.inherited)
@@ -461,7 +531,9 @@ fn addCommand(p: ?*anyopaque, _: usize) void {
 
 fn editCommand(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
-    openCommand(cc, cc.shortcuts.targets.items[i].action.custom_command) catch return;
+    const target = cc.shortcuts.targets.items[i];
+    _ = target.resolve(&cc.server.config) catch return;
+    openCommand(cc, target.action.custom_command) catch return;
 }
 
 fn commandChanged(p: ?*anyopaque, _: usize, _: []const u8) void {
@@ -472,7 +544,10 @@ fn commandChanged(p: ?*anyopaque, _: usize, _: []const u8) void {
 }
 
 fn saveCommandClicked(p: ?*anyopaque, _: usize) void {
-    owner(p).shortcuts.pending = .save_command;
+    const s = &owner(p).shortcuts;
+    if (s.command_editor) |editor| {
+        if (!editor.confirm_delete) s.pending = .save_command;
+    }
 }
 
 fn requestDeleteCommand(p: ?*anyopaque, _: usize) void {
@@ -483,20 +558,36 @@ fn requestDeleteCommand(p: ?*anyopaque, _: usize) void {
 }
 
 fn confirmDeleteCommand(p: ?*anyopaque, _: usize) void {
-    owner(p).shortcuts.pending = .delete_command;
+    const s = &owner(p).shortcuts;
+    if (s.command_editor) |editor| {
+        if (editor.confirm_delete) s.pending = .delete_command;
+    }
+}
+
+fn startRecording(cc: *panel.ControlCenter, target: Target) bool {
+    const s = &cc.shortcuts;
+    s.cancel();
+    s.editing = target.copy(s.editing_arena.allocator()) catch {
+        s.cancelRecording();
+        cc.refresh();
+        return false;
+    };
+    cc.refresh();
+    return true;
 }
 
 fn edit(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
-    cc.shortcuts.cancel();
-    cc.shortcuts.editing = cc.shortcuts.targets.items[i];
-    cc.refresh();
+    const target = cc.shortcuts.targets.items[i];
+    _ = target.resolve(&cc.server.config) catch return;
+    _ = startRecording(cc, target);
 }
 fn addClicked(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
-    cc.shortcuts.cancel();
-    cc.shortcuts.editing = .{ .action = cc.shortcuts.targets.items[i].action, .index = null };
-    cc.refresh();
+    var target = cc.shortcuts.targets.items[i];
+    _ = target.resolve(&cc.server.config) catch return;
+    target.chord = null;
+    _ = startRecording(cc, target);
 }
 fn collapse(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
@@ -509,18 +600,22 @@ fn cancelClicked(p: ?*anyopaque, _: usize) void {
     cc.shortcuts.cancel();
     cc.refresh();
 }
-fn confirmClicked(p: ?*anyopaque, _: usize) void {
-    owner(p).shortcuts.pending = .record;
+fn confirmClicked(p: ?*anyopaque, i: usize) void {
+    const s = &owner(p).shortcuts;
+    if (s.editing) |active| {
+        if (active.eql(s.targets.items[i])) s.pending = .record;
+    }
 }
 
 fn resetClicked(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
     cc.shortcuts.cancel();
-    cc.shortcuts.pending = .{ .reset = cc.shortcuts.targets.items[i].action };
+    cc.shortcuts.pending = .{ .reset = cc.shortcuts.targets.items[i] };
 }
 
 fn requestReset(p: ?*anyopaque, _: usize) void {
     const cc = owner(p);
+    if (cc.shortcuts.rendered_mode != cc.server.config.compositor.desktop_mode) return;
     cc.shortcuts.cancel();
     cc.shortcuts.confirm_reset = true;
     cc.refresh();
@@ -528,6 +623,7 @@ fn requestReset(p: ?*anyopaque, _: usize) void {
 
 fn confirmReset(p: ?*anyopaque, _: usize) void {
     const cc = owner(p);
+    if (!cc.shortcuts.confirm_reset) return;
     cc.shortcuts.confirm_reset = false;
     cc.shortcuts.pending = .{ .reset = null };
 }
@@ -535,9 +631,9 @@ fn confirmReset(p: ?*anyopaque, _: usize) void {
 fn disableClicked(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
     const target = cc.shortcuts.targets.items[i];
-    const bind = cc.server.config.activeKeybinds()[target.index.?];
-    cc.shortcuts.cancel();
-    cc.shortcuts.editing = target;
+    const index = (target.resolve(&cc.server.config) catch return) orelse return;
+    const bind = cc.server.config.activeKeybinds()[index];
+    if (!startRecording(cc, target)) return;
     cc.shortcuts.candidate = .{ .sym = bind.sym, .modifiers = bind.modifiers, .action = .noop };
     cc.shortcuts.pending = .record;
 }

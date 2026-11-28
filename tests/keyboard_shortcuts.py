@@ -392,5 +392,125 @@ def run():
             log.close()
 
 
+def run_reload_callbacks():
+    workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+    mode = "workspaces" if workspace_mode else "canvas"
+    table = "keybinds.workspace" if workspace_mode else "keybinds"
+    close = '"Super+q" = "close_window"\n'
+    full = '"Super+f" = "toggle_fullscreen"\n'
+    extra = '"Alt+F10" = "focus_next"\n'
+    managed = '"Alt+F12" = "custom_command managed"\n'
+    command = '\n[shortcut_commands]\nmanaged = "printf old"\n'
+    changed = command.replace("printf old", "printf new")
+
+    def config(bindings):
+        return f'[compositor]\ndesktop_mode = "{mode}"\n[{table}]\n' + bindings
+
+    with tempfile.TemporaryDirectory(prefix="rediwm-shortcuts-reload-") as directory:
+        tmp = Path(directory)
+        path = tmp / "rediwm-config.toml"
+        process, log = spawn_compositor(tmp, config_content=config(close + full),
+                                        env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                def widgets():
+                    return ipc.get_widget_tree("control_center")["widgets"]
+
+                def point(label, beside=None):
+                    rows = widgets()
+                    matches = [w for w in rows if label in (w["label"], w["name"])]
+                    if beside is not None:
+                        y = next(w["box"]["y"] for w in rows if w["label"] == beside)
+                        matches.sort(key=lambda w: abs(w["box"]["y"] - y))
+                    box = matches[0]["box"]
+                    panel = ipc.get_shell_state()["control_center"]["box"]
+                    return (round(panel["x"] + box["x"] + box["width"] / 2),
+                            round(panel["y"] + box["y"] + box["height"] / 2))
+
+                def click(label, beside=None):
+                    ipc.click_at(*point(label, beside))
+                    time.sleep(.15)
+
+                def reload(text):
+                    path.write_text(text)
+                    ipc.reload_config()
+                    time.sleep(.15)
+
+                def reload_while_held(label, text, beside=None):
+                    ipc.move_cursor(*point(label, beside))
+                    ipc.pointer_button(0x110, True)
+                    reload(text)
+                    ipc.pointer_button(0x110, False)
+                    time.sleep(.15)
+
+                ipc.open_control_center()
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                for case, before, after, should_unassign in (
+                    ("reordered", close + full, full + close, True),
+                    ("inserted", close + full, extra + close + full, True),
+                    ("removed", extra + close + full, close + full, True),
+                    ("disappeared", close + full, full, False),
+                    ("reassigned", close + full, close.replace("close_window", "toggle_maximize") + full, False),
+                ):
+                    reload(config(before))
+                    updated = config(after)
+                    reload_while_held("Unassign shortcut", updated, "Super+q")
+                    if not should_unassign:
+                        assert path.read_text() == updated, case
+                        continue
+                    expected = tomllib.loads(updated)["keybinds"]
+                    actual = tomllib.loads(path.read_text())["keybinds"]
+                    if workspace_mode:
+                        expected, actual = expected["workspace"], actual["workspace"]
+                        # Workspaces inherits Super+q for the terminal.
+                        expected["Super+q"] = "noop"
+                    else:
+                        expected.pop("Super+q")
+                    assert actual == expected, (case, actual, expected)
+
+                reload(config(close + full))
+                click("Super+q")
+                ipc.key(125, True)
+                ipc.key_press("F12")
+                ipc.key(125, False)
+                time.sleep(.15)
+                updated = config(full + close)
+                reload_while_held("Save shortcut", updated)
+                assert path.read_text() == updated
+
+                reload(config(close + full + managed) + command)
+                click("shortcut_search")
+                ipc.type_text("Alt+F12")
+                time.sleep(.15)
+                for new_command in (changed, ""):
+                    reload(config(close + full + managed) + command)
+                    updated = config(close + full + managed) + new_command
+                    reload_while_held("Unassign shortcut", updated, "Alt+F12")
+                    assert path.read_text() == updated
+
+                reload(config(close + full + managed) + command)
+                updated = config(close + full + managed) + changed
+                reload_while_held("Edit command", updated)
+                assert not any(w["name"] == "shortcut_command" for w in widgets())
+                assert path.read_text() == updated
+
+                reload(config(close + full + managed) + command)
+                click("Edit command")
+                reload_while_held("Save command", updated)
+                assert path.read_text() == updated
+                click("Cancel")
+                click("Edit command")
+                click("Delete command…")
+                updated = config(close + full + managed)
+                reload_while_held("Delete command and its shortcuts", updated)
+                assert path.read_text() == updated
+        finally:
+            stop_process(process)
+            log.close()
+    print(f"PASS: {mode} shortcut callbacks preserve their targets across reload")
+
+
 if __name__ == "__main__":
     run()
+    run_reload_callbacks()
