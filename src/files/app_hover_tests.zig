@@ -19,6 +19,9 @@ test "retained hover repairs match complete Cairo rasters across isolated transi
     ui_theme.global.app_sidebar_selected_marker = .{ 1, 0.95, 0.84, 1 };
     ui_theme.global.app_sidebar_item_radius = 10;
     ui_theme.global.app_sidebar[3] = 0.5;
+    ui_theme.global.relief_depth = 3;
+    ui_theme.global.relief_softness = 3;
+    ui_theme.global.button_pressed_relief = .inset;
     const before = anim.currentSettings();
     defer anim.applySettings(before);
     anim.applySettings(.{ .reduced_motion = .off });
@@ -31,6 +34,7 @@ test "retained hover repairs match complete Cairo rasters across isolated transi
     defer points.deinit(std.testing.allocator);
 
     for ([_]bool{ false, true }) |list| {
+        ui_theme.global.button_relief = if (list) .inset else .raised;
         ui_theme.global.app_highlight_bevel = if (list) 7 else 0;
         app.list_view = list;
 

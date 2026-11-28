@@ -57,7 +57,9 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
     }
     if (key >= 400 and key < 400 + column_labels.len) return self.listColumn(key - 400);
     if (key >= 200 and key < 200 + std.meta.tags(header.Action).len) {
-        var rect = header.rect(self.w, self.inRepository(), @enumFromInt(key - 200));
+        const action: header.Action = @fromBackingInt(@intCast(key - 200));
+        if (toolbarReliefAction(action) and toolbarReliefEnabled()) return toolbarReliefBounds(self);
+        var rect = header.rect(self.w, self.inRepository(), action);
         rect.x -= 1;
         rect.y -= 1;
         rect.w += 2;
@@ -536,21 +538,48 @@ pub fn toolbarButtonProximity(
     );
 }
 
+pub fn toolbarReliefEnabled() bool {
+    const t = ui_theme.global;
+    return (t.button_relief != .flat or t.button_pressed_relief != .flat) and
+        @import("ui").relief.Spec.from(t, 1).enabled();
+}
+
+pub fn toolbarReliefAction(action: header.Action) bool {
+    return switch (action) {
+        .new, .grid, .list, .sort, .filter => true,
+        else => false,
+    };
+}
+
+/// Shared paint and damage bounds for shadows cast by action-row buttons.
+pub fn toolbarReliefBounds(self: *App) header.Rect {
+    return .{
+        .x = 0,
+        .y = header.nav_height,
+        .w = @floatFromInt(self.w),
+        .h = @floatFromInt(header.height(self.w, self.inRepository()) - header.nav_height - 1),
+    };
+}
+
 /// Repaint only toolbar buttons whose proximity appearance may have changed.
 pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) void {
     const reach = ui_theme.global.border_glow_reach;
     if (reach <= 0) return;
-    if (!ui_theme.global.button_hover_glow_enabled and ui_theme.global.button_relief == .flat) return;
+    const relief_enabled = toolbarReliefEnabled();
+    const glow_enabled = ui_theme.global.button_hover_glow_enabled;
+    if (!glow_enabled and !relief_enabled) return;
 
     var damage: ?header.Rect = null;
     for (std.meta.tags(header.Action)) |action| {
         if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) continue;
+        const relieved = relief_enabled and toolbarReliefAction(action);
+        if (!glow_enabled and !relieved) continue;
 
         const before = self.toolbarButtonProximity(action, old_x, old_y);
         const after = self.toolbarButtonProximity(action, new_x, new_y);
         if (@min(before.distance, after.distance) > reach) continue;
 
-        const rect = header.rect(self.w, self.inRepository(), action);
+        const rect = if (relieved) toolbarReliefBounds(self) else header.rect(self.w, self.inRepository(), action);
         damage = if (damage) |current| unionRect(current, rect) else rect;
     }
     if (damage) |rect| self.addDamage(rect);
