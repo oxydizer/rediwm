@@ -271,11 +271,20 @@ def run(scale, theme=None):
 
                 # Jobs finish and retire: done rows, a cleared icon.
                 fake.change([job(1, state="completed", completed_bytes=1229 * MB, total_bytes=1229 * MB, destination=f"{home}/Downloads/ISOs", label="archlinux-2026.11.01-x86_64.iso", removed=True),
-                             job(5, kind="delete", state="failed", label="old-builds", removed=True)])
+                             job(5, kind="delete", state="failed", label="old-builds", removed=True),
+                             job(6, label="active-transfer.bin", completed_bytes=1, total_bytes=10)])
                 ipc.click_at(*icon)
                 time.sleep(0.35)
                 hit = wait_for(lambda: (lambda h: h if h["target_type"] == "transfers_popup" else None)(ipc.hit_test(*point)), "the panel again")
                 capture("finished")
+                clear = find("clear_done")
+                ipc.click_at(*clear)
+                wait_for(lambda: items()[1]["transfers"]["visible"], "the active transfer to keep the item visible")
+                wait_for(lambda: ipc.hit_test(*point)["target_type"] == "transfers_popup", "the panel to stay open while a transfer is active")
+
+                fake.change([job(1, state="completed", completed_bytes=1229 * MB, total_bytes=1229 * MB, destination=f"{home}/Downloads/ISOs", label="archlinux-2026.11.01-x86_64.iso", removed=True),
+                             job(5, kind="delete", state="failed", label="old-builds", removed=True),
+                             job(6, label="active-transfer.bin", completed_bytes=1, total_bytes=10)])
                 # Files leaves: live jobs go, finished ones stay until cleared.
                 fake.close()
                 fake = None
