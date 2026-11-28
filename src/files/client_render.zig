@@ -71,6 +71,7 @@ fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
 }
 
 pub fn render(self: *Client) !void {
+    _ = self.app.validatedMenuCount();
     if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "client_frame", self.app.items.items.len);

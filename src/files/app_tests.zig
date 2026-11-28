@@ -665,6 +665,7 @@ pub fn pointOnItem(app: *App, idx: usize) [2]f64 {
 
 test {
     _ = @import("app_pointer_tests.zig");
+    _ = @import("app_menu_tests.zig");
 }
 
 test {

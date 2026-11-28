@@ -12,6 +12,8 @@ const collation = @import("collation.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Item = struct {
+    /// lstat identity used to keep selection on the same directory entry.
+    entry_key: ?@import("sizetree.zig").Key = null,
     directory_key: ?@import("sizetree.zig").Key = null,
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,

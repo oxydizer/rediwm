@@ -192,6 +192,7 @@ pub const ToolbarHover = struct {
 };
 
 pub const ViewItem = struct {
+    entry_key: ?@import("sizetree.zig").Key = null,
     directory_key: ?@import("sizetree.zig").Key = null,
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
