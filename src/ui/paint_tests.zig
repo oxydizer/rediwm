@@ -351,6 +351,7 @@ test "typing reveals text behind the gliding caret and preserves the suffix" {
             var middle = background;
             var complete = background;
             var r = Renderer.init(&background, 240, 90, scale);
+            r.animate_text_caret = true;
             // Hide only the caret's ink so the comparison isolates the text.
             r.palette = theme.Theme{ .caret = .{ 0, 0, 0, 0 } };
             const frame = field_widget.paintFrame(&r, .{ .x = 0, .y = 0, .w = 150, .h = 40 }, .{}, .{ .focused = true });

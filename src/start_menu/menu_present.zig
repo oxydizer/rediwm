@@ -193,6 +193,7 @@ pub fn paintContent(menu: *StartMenu) void {
     _ = menu.loadVisibleIcons();
     var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
     renderer.palette = menuPalette();
+    renderer.animate_text_caret = true;
     ui.input.active_dispatcher = &menu.dispatcher;
     menu.background.paintIncremental(gpa, &menu.root, &renderer, &buf.stamp);
     ui.input.active_dispatcher = null;

@@ -209,8 +209,9 @@ pub fn paintTextInput(widget: *const Widget, data: TextInputData, renderer: *Ren
     const ink_y = widget.computed_y + (widget.computed_height - ink_h) / 2;
 
     const now = anim.nowMs();
-    // Scrolling moves the text immediately, so the caret must follow it.
-    if (scroll_x != scroll_before) caret.snap = true;
+    // Snap when the host paints only on edits, or when scrolling moves the
+    // text immediately and the caret must follow it.
+    if (!renderer.animate_text_caret or scroll_x != scroll_before) caret.snap = true;
     caret.track(now, caret_pen);
     const caret_x = inner_x + caret.offset(now) - scroll_x;
 
@@ -235,7 +236,7 @@ pub fn paintTextInput(widget: *const Widget, data: TextInputData, renderer: *Ren
         .scroll_x = scroll_x,
         .style = text_style,
     };
-    if (caret.revealing and caret.offset(now) < caret_pen) {
+    if (renderer.animate_text_caret and caret.revealing and caret.offset(now) < caret_pen) {
         // Keep the full shaped run in place and uncover it behind the caret.
         // Round inward: the text clip uses whole logical pixels, and rounding
         // out could expose ink ahead of the caret at fractional positions.

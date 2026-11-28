@@ -472,3 +472,86 @@ test "incremental panel allocation failure falls back to a complete paint" {
     try std.testing.expectEqualSlices(u32, &expected, &pixels);
     try std.testing.expectEqual(allocations, failing.alloc_index);
 }
+
+test "retained text field paints edits immediately within its damage bounds" {
+    const allocator = std.testing.allocator;
+    const saved_dispatcher = ui.input.active_dispatcher;
+    defer ui.input.active_dispatcher = saved_dispatcher;
+    const saved_config = ui.input.caret_config;
+    defer ui.input.caret_config = saved_config;
+    ui.input.caret_config = .{ .blink_ms = 0, .motion_ms = 80 };
+    ui.anim.setNowMs(1000);
+    defer ui.anim.setNowMs(null);
+
+    var children = [_]ui.layout.Widget{.{
+        .kind = .{ .text_input = .{
+            .value = try allocator.dupe(u8, "a"),
+            .cursor_pos = 1,
+            .placeholder = "",
+            .on_change = struct {
+                fn changed(_: ?*anyopaque, _: usize, _: []const u8) void {}
+            }.changed,
+        } },
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 90,
+        .computed_height = 36,
+    }};
+    const field = &children[0];
+    defer allocator.free(field.kind.text_input.value);
+    var root: ui.layout.Widget = .{
+        .kind = .{ .rect = .{ .color = .{ 0.1, 0.2, 0.3, 1 } } },
+        .computed_width = 160,
+        .computed_height = 90,
+        .children = &children,
+    };
+    root.linkParents();
+    var dispatcher: ui.input.Dispatcher = .{ .focused = field };
+    ui.input.active_dispatcher = &dispatcher;
+
+    var bg: Background = .{};
+    defer bg.deinit(allocator);
+    var pixels: [240 * 135]u32 = undefined;
+    var expected: [240 * 135]u32 = undefined;
+    var renderer = ui.paint.Renderer.init(&pixels, 240, 135, 1.5);
+    renderer.palette = .{ .relief_depth = 0, .relief_softness = 0 };
+    var stamp: Stamp = .{};
+    bg.paintIncremental(allocator, &root, &renderer, &stamp);
+
+    const long = "A replacement long enough to scroll the comment field horizontally";
+    const Edit = struct { keys: []const ui.input.Key, value: []const u8, scrolled: bool = false };
+    const edits = [_]Edit{
+        .{ .keys = &.{.{ .char = "b" }}, .value = "ab" },
+        .{ .keys = &.{ .{ .char = "c" }, .{ .char = "d" } }, .value = "abcd" },
+        .{ .keys = &.{.backspace}, .value = "abc" },
+        .{ .keys = &.{ .select_all, .{ .char = long } }, .value = long, .scrolled = true },
+        .{ .keys = &.{ .select_all, .{ .char = "xy" } }, .value = "xy" },
+    };
+    for (edits, 0..) |edit, index| {
+        const now = 1001 + @as(i64, @intCast(index));
+        ui.anim.setNowMs(now);
+        for (edit.keys) |key| _ = try dispatcher.keyEvent(allocator, key, .{});
+        const before_paint = dispatcher.caret;
+        bg.paintIncremental(allocator, &root, &renderer, &stamp);
+
+        const data = field.kind.text_input;
+        try std.testing.expectEqualStrings(edit.value, data.value);
+        const caret = dispatcher.caret;
+        const metrics = caret.field orelse return error.MissingFieldMetrics;
+        const pen = try ui.text.measureWidthF(data.value[0..data.cursor_pos], .manrope, metrics.font_size, metrics.scale);
+        try std.testing.expectEqual(pen, caret.offset(now));
+        try std.testing.expect(!caret.moving(now));
+        try std.testing.expectEqual(edit.scrolled, caret.scroll > 0);
+        try std.testing.expectEqual(ui.paint.ClipRect{ .x = 12, .y = 12, .w = 106, .h = 52 }, bg.damage orelse return error.MissingFieldDamage);
+
+        // Compare the first edit frame with a complete paint at the final caret position.
+        var reference = ui.paint.Renderer.init(&expected, 240, 135, 1.5);
+        reference.palette = renderer.palette;
+        reference.animate_text_caret = true;
+        dispatcher.caret = before_paint;
+        dispatcher.caret.snap = true;
+        bg.paint(allocator, &root, &reference);
+        dispatcher.caret = caret;
+        try std.testing.expectEqualSlices(u32, &expected, &pixels);
+    }
+}
