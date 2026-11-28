@@ -207,7 +207,7 @@ pub const Section = struct {
             .reset => |target| reset: {
                 if (target) |row| _ = row.resolve(config) catch |err| break :reset err;
                 if (s.rendered_mode != config.compositor.desktop_mode) break :reset error.ConfigChanged;
-                break :reset saving.saveReset(gpa, cc.server.io, config.path, config.activeKeybinds(), config.compositor.desktop_mode, if (target) |row| row.action else null);
+                break :reset saving.saveReset(gpa, cc.server.io, config, config.compositor.desktop_mode, if (target) |row| row.action else null);
             },
             .save_command => s.saveCommand(cc, false),
             .delete_command => s.saveCommand(cc, true),

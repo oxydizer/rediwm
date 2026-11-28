@@ -458,7 +458,8 @@ pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []con
     return saveChanges(a, io, path, binds, bindingChanges(binds, index, replacement, &changes), mode, command);
 }
 
-pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, mode: loader.DesktopMode, target: ?keys.Action) !void {
+pub fn saveReset(a: std.mem.Allocator, io: std.Io, cfg: *const loader.Config, mode: loader.DesktopMode, target: ?keys.Action) !void {
+    const path = cfg.path;
     if (path.len == 0) return error.NoConfigPath;
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
@@ -470,8 +471,34 @@ pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []co
     var old = try loader.parse(scratch, original, path);
     defer old.deinit();
     old.compositor.desktop_mode = mode;
-    if (!sameBindings(old.activeKeybinds(), binds))
+    const expected_binds = if (mode.tiled())
+        cfg.workspace_keybinds
+    else
+        cfg.keybinds;
+    if (!sameBindings(old.activeKeybinds(), expected_binds))
         return error.ConfigChanged;
+
+    const expected_table = if (mode.tiled())
+        cfg.workspace_shortcut_slots
+    else
+        cfg.shortcut_slots;
+    const actual_table = if (mode.tiled())
+        old.workspace_shortcut_slots
+    else
+        old.shortcut_slots;
+
+    for (expected_table.entries.items) |entry| {
+        if (!selected(entry.action, target)) continue;
+        const actual = actual_table.get(entry.action) orelse
+            return error.ConfigChanged;
+        if (!entry.slots.eql(actual))
+            return error.ConfigChanged;
+    }
+    for (actual_table.entries.items) |entry| {
+        if (!selected(entry.action, target)) continue;
+        if (expected_table.get(entry.action) == null)
+            return error.ConfigChanged;
+    }
 
     var defaults = try factoryConfig(scratch, mode);
     defer defaults.deinit();
@@ -682,9 +709,7 @@ test "reset cannot steal Alt+F4 from a custom command in any desktop mode" {
         for ([_]?keys.Action{ .close_window, null }) |target| {
             try std.testing.expectError(
                 error.ShortcutConflict,
-                saveReset(
-                    a, io, path, cfg.activeKeybinds(), mode, target,
-                ),
+                saveReset(a, io, &cfg, mode, target),
             );
 
             const actual = try std.Io.Dir.cwd().readFileAlloc(
@@ -862,6 +887,161 @@ test "custom command deletion rejects stale slot metadata in either mode" {
     }
 }
 
+test "reset rejects added removed or changed slot metadata" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", "Alt+F4"]
+        \\[shortcut_slots.workspace]
+        \\"close_window" = ["Super+c", "Alt+F4"]
+        \\
+    ;
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+
+    for ([_]loader.DesktopMode{ .canvas, .tiling }) |mode| {
+        before.compositor.desktop_mode = mode;
+        const assigned = before.storedShortcutSlots(.close_window).?;
+        const replacements = [_]?slots.Slots{
+            null,
+            .{
+                .primary = assigned.alternate,
+                .alternate = assigned.primary,
+            },
+        };
+
+        for (replacements) |replacement| {
+            const changed = try slots.patch(
+                a, original, .close_window, replacement, mode.tiled(),
+            );
+            defer a.free(changed);
+
+            try tmp.dir.writeFile(io, .{
+                .sub_path = "config.toml",
+                .data = changed,
+            });
+
+            for ([_]?keys.Action{ .close_window, null }) |target| {
+                try std.testing.expectError(
+                    error.ConfigChanged,
+                    saveReset(a, io, &before, mode, target),
+                );
+                const actual = try std.Io.Dir.cwd().readFileAlloc(
+                    io, path, a, .limited(1 << 20),
+                );
+                defer a.free(actual);
+                try std.testing.expectEqualStrings(changed, actual);
+            }
+        }
+
+        const absent = try slots.patch(
+            a, original, .close_window, null, mode.tiled(),
+        );
+        defer a.free(absent);
+        var snapshot = try loader.parse(a, absent, path);
+        defer snapshot.deinit();
+
+        try tmp.dir.writeFile(io, .{
+            .sub_path = "config.toml",
+            .data = original,
+        });
+
+        for ([_]?keys.Action{ .close_window, null }) |target| {
+            try std.testing.expectError(
+                error.ConfigChanged,
+                saveReset(a, io, &snapshot, mode, target),
+            );
+            const actual = try std.Io.Dir.cwd().readFileAlloc(
+                io, path, a, .limited(1 << 20),
+            );
+            defer a.free(actual);
+            try std.testing.expectEqualStrings(original, actual);
+        }
+    }
+}
+
+test "workspace reset preserves classic and canvas slot metadata" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[shortcut_slots]
+        \\"close_window" = ["Alt+F4", "Super+q"]
+        \\[shortcut_slots.workspace]
+        \\"close_window" = ["Alt+F4", "Super+c"]
+        \\
+    ;
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+
+    for ([_]loader.DesktopMode{ .tiling, .scrolling }) |mode| {
+        for ([_]?keys.Action{ .close_window, null }) |target| {
+            try tmp.dir.writeFile(io, .{
+                .sub_path = "config.toml",
+                .data = original,
+            });
+
+            try saveReset(a, io, &before, mode, target);
+
+            const saved = try std.Io.Dir.cwd().readFileAlloc(
+                io, path, a, .limited(1 << 20),
+            );
+            defer a.free(saved);
+            var after = try loader.parse(a, saved, path);
+            defer after.deinit();
+            after.compositor.desktop_mode = mode;
+
+            try std.testing.expect(
+                after.workspace_shortcut_slots.get(.close_window) == null,
+            );
+            try std.testing.expect(
+                after.shortcut_slots.get(.close_window).?.eql(
+                    before.shortcut_slots.get(.close_window).?,
+                ),
+            );
+            try std.testing.expect(sameBindings(
+                before.keybinds, after.keybinds,
+            ));
+            try std.testing.expect(sameBindings(
+                before.workspace_keybinds, after.workspace_keybinds,
+            ));
+
+            var defaults = try factoryConfig(a, mode);
+            defer defaults.deinit();
+            const restored = slots.resolve(
+                after.activeKeybinds(),
+                defaults.activeKeybinds(),
+                .close_window,
+                after.storedShortcutSlots(.close_window),
+            );
+            const primary = try keys.parseKeybind("Super+c");
+            const alternate = try keys.parseKeybind("Alt+F4");
+            try std.testing.expectEqual(
+                keys.pack(primary.modifiers, primary.sym),
+                restored.primary.?,
+            );
+            try std.testing.expectEqual(
+                keys.pack(alternate.modifiers, alternate.sym),
+                restored.alternate.?,
+            );
+        }
+    }
+}
+
 test "reset restores factory slot order without binding changes" {
     const a = std.testing.allocator;
     const io = std.testing.io;
@@ -889,7 +1069,7 @@ test "reset restores factory slot order without binding changes" {
     ));
     try std.testing.expect(canResetSlots(&before, .close_window));
 
-    try saveReset(a, io, path, before.activeKeybinds(), .canvas, .close_window);
+    try saveReset(a, io, &before, .canvas, .close_window);
 
     const saved = try std.Io.Dir.cwd().readFileAlloc(
         io, path, a, .limited(1 << 20),
@@ -942,7 +1122,7 @@ test "individual and global resets preserve custom and inactive mode slots" {
     before.compositor.desktop_mode = .canvas;
 
     const custom: keys.Action = .{ .custom_command = "demo" };
-    try saveReset(a, io, path, before.activeKeybinds(), .canvas, .close_window);
+    try saveReset(a, io, &before, .canvas, .close_window);
 
     const saved = try std.Io.Dir.cwd().readFileAlloc(
         io, path, a, .limited(1 << 20),
@@ -965,7 +1145,7 @@ test "individual and global resets preserve custom and inactive mode slots" {
         individual.lookupKeybind(primary.modifiers, primary.sym).?,
     );
 
-    try saveReset(a, io, path, individual.activeKeybinds(), .canvas, null);
+    try saveReset(a, io, &individual, .canvas, null);
 
     const reset = try std.Io.Dir.cwd().readFileAlloc(
         io, path, a, .limited(1 << 20),
@@ -1024,7 +1204,7 @@ test "reset conflict leaves bindings and slot metadata untouched" {
     for ([_]?keys.Action{ .close_window, null }) |target| {
         try std.testing.expectError(
             error.ShortcutConflict,
-            saveReset(a, io, path, before.activeKeybinds(), .canvas, target),
+            saveReset(a, io, &before, .canvas, target),
         );
         const actual = try std.Io.Dir.cwd().readFileAlloc(
             io, path, a, .limited(1 << 20),
