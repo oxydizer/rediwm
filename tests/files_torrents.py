@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real libtorrent transfers, private D-Bus/state and loopback-only networking."""
 import hashlib
+import configparser
 import http.server
 import json
 import os
@@ -249,6 +250,28 @@ def run():
                 'active deletion disk barrier', 25)
             assert rows[0]['deletion_phase'] == 'ready', rows
             assert rows[0]['paused'], rows
+            manifest = tmp/'state/rediwm/transfers'/f'{active_id}.delete'
+            assert manifest.is_file(), 'deletion ownership manifest missing'
+            ownership = configparser.ConfigParser()
+            ownership.read(manifest)
+            assert ownership['deletion']['version'] == '1'
+            assert ownership['deletion']['torrent_id'] == active_id
+            assert Path(ownership['deletion']['storage_root']) == active_storage
+            assert int(ownership['deletion']['storage_device']) > 0
+            assert int(ownership['deletion']['storage_inode']) > 0
+            assert int(ownership['deletion']['file_count']) == 2
+            manifest_files = {
+                ownership[f'file-{i}']['path']:
+                ownership[f'file-{i}']
+                for i in range(2)
+            }
+            assert set(manifest_files) == {
+                'bundle/wanted.bin', 'bundle/skip.bin'
+            }, manifest_files
+            assert manifest_files['bundle/wanted.bin']['wanted'] == 'true'
+            assert manifest_files['bundle/skip.bin']['wanted'] == 'false'
+            assert 0 < int(manifest_files['bundle/wanted.bin']['done']) < len(payload)
+            assert int(manifest_files['bundle/skip.bin']['done']) == 0
             client.send(op='files', id=active_id)
             detail = client.reply('detail')
             progress = {f['path']: f['done'] for f in detail['files']}

@@ -250,6 +250,10 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
           lt::alert_cast<lt::cache_flushed_alert>(alert)) {
         if (!(t->handle.status().flags & lt::torrent_flags::paused))
           throw std::runtime_error("Torrent resumed during deletion");
+        // Record exactly what this transfer owns before detaching it.
+        // Cleanup and crash recovery must never infer ownership from a
+        // directory listing.
+        persist_deletion_manifest(*t);
         t->cache_transfer();
         t->cached.flags |= lt::torrent_flags::paused;
         t->deletion_phase = DeletionPhase::waiting_disk;

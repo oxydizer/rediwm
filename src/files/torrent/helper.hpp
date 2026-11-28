@@ -119,6 +119,7 @@ void request_save(Transfer &t);
 void finish_configuration(Transfer &t);
 void atomic_write(std::string const &path, std::string const &data);
 void persist(Transfer &t);
+void persist_deletion_manifest(Transfer &t);
 void validate(lt::torrent_info const &info);
 /// Runs one request. A non-empty result is a reply for the requester alone
 /// (and nothing changed, so nothing is published).

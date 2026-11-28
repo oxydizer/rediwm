@@ -1,6 +1,7 @@
 // Transfers: adding, configuring, persisting and restoring them, and the
 // commands Files sends. Part of rediwm-transfers (helper.cpp).
 #include "helper.hpp"
+#include <algorithm>
 
 namespace helper {
 
@@ -89,6 +90,76 @@ void persist(Transfer &t) {
   g_free(data);
   g_key_file_unref(key);
 }
+
+void persist_deletion_manifest(Transfer &t) {
+  if (!t.handle.is_valid())
+    throw std::runtime_error("Cannot manifest a detached torrent");
+
+  auto info = t.handle.torrent_file();
+  if (!info)
+    throw std::runtime_error("Torrent metadata unavailable for deletion");
+  validate(*info);
+
+  auto storage = t.handle.status().save_path;
+  if (storage.empty() || storage.front() != '/')
+    throw std::runtime_error("Invalid torrent storage root");
+
+  struct stat root_stat {};
+  if (lstat(storage.c_str(), &root_stat) || !S_ISDIR(root_stat.st_mode) ||
+      root_stat.st_uid != getuid())
+    throw std::runtime_error("Unsafe torrent storage root");
+
+  std::vector<int64_t> progress;
+  t.handle.file_progress(progress, lt::torrent_handle::piece_granularity);
+  auto priorities = t.handle.get_file_priorities();
+
+  GKeyFile *key = g_key_file_new();
+  g_key_file_set_integer(key, "deletion", "version", 1);
+  g_key_file_set_string(key, "deletion", "torrent_id", t.id.c_str());
+  g_key_file_set_integer(key, "deletion", "mode",
+                         static_cast<int>(t.deletion_mode));
+  g_key_file_set_string(key, "deletion", "storage_root", storage.c_str());
+  g_key_file_set_uint64(key, "deletion", "storage_device",
+                        static_cast<guint64>(root_stat.st_dev));
+  g_key_file_set_uint64(key, "deletion", "storage_inode",
+                        static_cast<guint64>(root_stat.st_ino));
+
+  auto const &files = info->files();
+  int count = 0;
+  for (auto index : files.file_range()) {
+    if (files.pad_file_at(index))
+      continue;
+    auto i = size_t(int(index));
+    auto group = "file-" + std::to_string(count++);
+    g_key_file_set_string(key, group.c_str(), "path",
+                          files.file_path(index).c_str());
+    g_key_file_set_uint64(key, group.c_str(), "size",
+                          static_cast<guint64>(files.file_size(index)));
+    auto done = i < progress.size() ? progress[i] : 0;
+    done = std::clamp<int64_t>(done, 0, files.file_size(index));
+    g_key_file_set_uint64(key, group.c_str(), "done",
+                          static_cast<guint64>(done));
+    g_key_file_set_boolean(
+        key, group.c_str(), "wanted",
+        i < priorities.size() &&
+            priorities[i] != lt::dont_download);
+  }
+  g_key_file_set_integer(key, "deletion", "file_count", count);
+
+  gsize size = 0;
+  char *data = g_key_file_to_data(key, &size, nullptr);
+  try {
+    atomic_write(state_dir + "/" + t.id + ".delete",
+                 std::string(data, size));
+  } catch (...) {
+    g_free(data);
+    g_key_file_unref(key);
+    throw;
+  }
+  g_free(data);
+  g_key_file_unref(key);
+}
+
 void validate(lt::torrent_info const &info) {
   if (info.num_files() > int(max_files))
     throw std::runtime_error("This torrent exceeds the 512 file limit");
