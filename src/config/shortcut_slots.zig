@@ -5,6 +5,37 @@ const keys = @import("keybinds.zig");
 pub const Chord = u64;
 pub const Slot = enum { primary, alternate };
 
+pub const Entry = struct {
+    action: keys.Action,
+    slots: Slots,
+};
+
+/// Explicit slot assignments only. An absent entry means that callers
+/// should derive slots from the effective bindings and factory defaults.
+pub const Table = struct {
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+
+    pub fn get(self: Table, action: keys.Action) ?Slots {
+        for (self.entries.items) |entry| {
+            if (keys.actionEql(entry.action, action)) return entry.slots;
+        }
+        return null;
+    }
+
+    pub fn put(
+        self: *Table,
+        allocator: std.mem.Allocator,
+        action: keys.Action,
+        slots: Slots,
+    ) !void {
+        if (self.get(action) != null) return error.DuplicateSlotAction;
+        try self.entries.append(allocator, .{
+            .action = action,
+            .slots = slots,
+        });
+    }
+};
+
 pub const Slots = struct {
     primary: ?Chord = null,
     alternate: ?Chord = null,
@@ -32,6 +63,51 @@ pub const Slots = struct {
             self.alternate == other.alternate;
     }
 };
+
+fn parseChord(value: []const u8) !?Chord {
+    if (value.len == 0) return null;
+    const spec = keys.parseKeybind(value) catch return error.InvalidSlotMetadata;
+    return keys.pack(spec.modifiers, spec.sym);
+}
+
+/// The key is a JSON-quoted action descriptor and the value is a pair
+/// of JSON strings. Empty strings represent explicitly unassigned slots.
+///
+/// The JSON string grammar is compatible with TOML's basic quoted strings
+/// for these values and supports escaped custom command action names.
+pub fn parseEntry(
+    allocator: std.mem.Allocator,
+    table: *Table,
+    raw_key: []const u8,
+    raw_value: []const u8,
+) !void {
+    const name = std.json.parseFromSliceLeaky(
+        []const u8,
+        allocator,
+        raw_key,
+        .{ .allocate = .alloc_always },
+    ) catch return error.InvalidSlotMetadata;
+
+    const action = keys.parseAction(name, allocator) catch
+        return error.InvalidSlotMetadata;
+    if (action == .noop) return error.InvalidSlotMetadata;
+
+    const values = std.json.parseFromSliceLeaky(
+        [2][]const u8,
+        allocator,
+        raw_value,
+        .{ .allocate = .alloc_always },
+    ) catch return error.InvalidSlotMetadata;
+
+    const result: Slots = .{
+        .primary = try parseChord(values[0]),
+        .alternate = try parseChord(values[1]),
+    };
+    if (result.primary != null and result.primary == result.alternate)
+        return error.InvalidSlotMetadata;
+
+    try table.put(allocator, action, result);
+}
 
 pub fn chord(bind: keys.Keybind) Chord {
     return keys.pack(bind.modifiers, bind.sym);
@@ -232,4 +308,73 @@ test "duplicate metadata cannot assign one chord to both slots" {
     });
     try std.testing.expectEqual(value, resolved.primary.?);
     try std.testing.expectEqual(@as(?Chord, null), resolved.alternate);
+}
+
+test "metadata parsing distinguishes absent and explicitly empty slots" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+
+    var table: Table = .{};
+    try std.testing.expectEqual(
+        @as(?Slots, null),
+        table.get(.close_window),
+    );
+
+    try parseEntry(
+        arena.allocator(),
+        &table,
+        "\"close_window\"",
+        "[\"\", \"Alt+F4\"]",
+    );
+
+    const slots = table.get(.close_window).?;
+    try std.testing.expectEqual(@as(?Chord, null), slots.primary);
+    const alternate = try binding("Alt+F4", .close_window);
+    try std.testing.expectEqual(chord(alternate), slots.alternate.?);
+}
+
+test "slot metadata supports custom command action identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var table: Table = .{};
+    try parseEntry(
+        arena.allocator(),
+        &table,
+        "\"custom_command command-7\"",
+        "[\"Ctrl+Alt+F7\", \"\"]",
+    );
+    const action: keys.Action = .{ .custom_command = "command-7" };
+    try std.testing.expect(table.get(action) != null);
+    try std.testing.expect(table.get(.close_window) == null);
+}
+
+test "malformed and duplicate slot metadata is rejected" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var table: Table = .{};
+    const a = arena.allocator();
+    try std.testing.expectError(
+        error.InvalidSlotMetadata,
+        parseEntry(a, &table, "\"close_window\"", "[\"Super+q\"]"),
+    );
+    try std.testing.expectError(
+        error.InvalidSlotMetadata,
+        parseEntry(a, &table, "\"close_window\"", "[\"Super+q\", \"Super+q\"]"),
+    );
+    try std.testing.expectError(
+        error.InvalidSlotMetadata,
+        parseEntry(a, &table, "\"close_window\"", "[\"Super+notakey\", \"\"]"),
+    );
+    try std.testing.expectError(
+        error.InvalidSlotMetadata,
+        parseEntry(a, &table, "\"noop\"", "[\"\", \"\"]"),
+    );
+    try parseEntry(a, &table, "\"close_window\"", "[\"\", \"\"]");
+    try std.testing.expectError(
+        error.DuplicateSlotAction,
+        parseEntry(a, &table, "\"close_window\"", "[\"Super+q\", \"\"]"),
+    );
 }

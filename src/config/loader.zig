@@ -8,6 +8,7 @@ const xkb = @import("xkbcommon");
 const theme_mod = @import("ui").theme;
 const Theme = theme_mod.Theme;
 const keybinds = @import("keybinds.zig");
+const shortcut_slots_mod = @import("shortcut_slots.zig");
 const Action = keybinds.Action;
 const Keybind = keybinds.Keybind;
 const default_file = @import("default.zig");
@@ -423,6 +424,8 @@ pub const Config = struct {
     outputs: []OutputConfig = &.{},
     keybinds: []Keybind = &.{},
     workspace_keybinds: []Keybind = &.{},
+    shortcut_slots: shortcut_slots_mod.Table = .{},
+    workspace_shortcut_slots: shortcut_slots_mod.Table = .{},
     shortcut_commands: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     workspace_lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
@@ -448,6 +451,13 @@ pub const Config = struct {
 
     pub fn activeKeybinds(self: *const Config) []Keybind {
         return if (self.compositor.desktop_mode.tiled()) self.workspace_keybinds else self.keybinds;
+    }
+
+    pub fn storedShortcutSlots(self: *const Config, action: Action) ?shortcut_slots_mod.Slots {
+        return (if (self.compositor.desktop_mode.tiled())
+            self.workspace_shortcut_slots
+        else
+            self.shortcut_slots).get(action);
     }
 
     pub fn sandboxAllowGroups(self: *const Config, app_id: ?[]const u8, engine: ?[]const u8) sandbox_allow.GroupSet {

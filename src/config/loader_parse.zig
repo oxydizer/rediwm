@@ -4,6 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const theme_mod = @import("ui").theme;
 const keybinds = @import("keybinds.zig");
+const shortcut_slots = @import("shortcut_slots.zig");
 const Keybind = keybinds.Keybind;
 const default_file = @import("default.zig");
 const types = @import("types.zig");
@@ -60,7 +61,7 @@ const ParseState = struct {
     pointer_records: input_device.Parser = .{},
     target_flags: [anim.Target.count]anim_cfg.TargetFlags = @splat(.{}),
 
-    fn apply(state: *ParseState, cfg: *Config, path: []const u8, line_no: usize, key: []const u8, value: []const u8) !void {
+    fn apply(state: *ParseState, cfg: *Config, path: []const u8, line_no: usize, key: []const u8, value: []const u8, raw_key: []const u8) !void {
         switch (state.section) {
             .none => {},
             .theme => {
@@ -169,6 +170,22 @@ const ParseState = struct {
                 const a = cfg.arena.allocator();
                 const command = std.json.parseFromSliceLeaky([]const u8, a, value, .{ .allocate = .alloc_always }) catch return error.InvalidConfig;
                 try cfg.shortcut_commands.put(a, try a.dupe(u8, key), command);
+            },
+            .shortcut_slots, .workspace_shortcut_slots => {
+                const table = if (state.section == .shortcut_slots)
+                    &cfg.shortcut_slots
+                else
+                    &cfg.workspace_shortcut_slots;
+                shortcut_slots.parseEntry(
+                    cfg.arena.allocator(),
+                    table,
+                    raw_key,
+                    value,
+                ) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    fail(path, line_no, "invalid shortcut slot metadata: {s}", .{@errorName(err)});
+                    return error.InvalidConfig;
+                };
             },
             .keybinds, .workspace_keybinds => {
                 const spec = keybinds.parseKeybind(key) catch {
@@ -346,10 +363,11 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
             fail(path, line_no, "expected key = value", .{});
             return error.InvalidConfig;
         };
-        const key = unquoteKey(std.mem.trim(u8, line[0..eq], " \t"));
+        const raw_key = std.mem.trim(u8, line[0..eq], " \t");
+        const key = unquoteKey(raw_key);
         const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
 
-        try state.apply(&cfg, path, line_no, key, value);
+        try state.apply(&cfg, path, line_no, key, value, raw_key);
     }
     try state.finish(&cfg, allocator, path, line_no);
     return cfg;
@@ -376,6 +394,8 @@ pub const Section = union(enum) {
     keybinds,
     workspace_keybinds,
     shortcut_commands,
+    shortcut_slots,
+    workspace_shortcut_slots,
     polkit,
     idle,
     power,
@@ -455,10 +475,11 @@ pub fn parseSection(line: []const u8) !Section {
     const name = line[1..close];
     if (std.mem.eql(u8, name, "input_device")) return error.InvalidConfig;
     if (std.mem.eql(u8, name, "keybinds.workspace")) return .workspace_keybinds;
+    if (std.mem.eql(u8, name, "shortcut_slots.workspace")) return .workspace_shortcut_slots;
     if (std.mem.eql(u8, name, "power.on_battery")) return .power_battery;
     if (std.mem.eql(u8, name, "power.plugged_in")) return .power_plugged;
     // Array tables and internal tags are deliberately not accepted here.
-    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .shortcut_commands, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
+    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .shortcut_commands, .shortcut_slots, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
     if (std.mem.eql(u8, name, "effects.window_move")) return .{ .effect_binding = .window_move };
