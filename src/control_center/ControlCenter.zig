@@ -108,6 +108,7 @@ retired_configs: std.ArrayList(@import("config").loader.Config) = .empty,
 pointer_down: bool = false,
 /// The window is activated; keys arrive only with `hasKeyboardFocus`.
 focused: bool = false,
+paste_target: ?*Widget = null,
 root: Widget = undefined,
 root_children: [2]Widget = undefined,
 body_children: [2]Widget = undefined,
@@ -247,6 +248,7 @@ pub fn close(cc: *ControlCenter) void {
 }
 
 pub fn destroy(cc: *ControlCenter) void {
+    cc.cancelPaste();
     if (cc.idle_timer) |timer| timer.remove();
     cc.idle_timer = null;
     // Dispatcher holds raw pointers into this tree. Drop them before the
@@ -299,6 +301,7 @@ pub fn setActivated(cc: *ControlCenter, activated: bool) void {
     if (cc.focused == activated) return;
     cc.focused = activated;
     if (!activated) {
+        cc.cancelPaste();
         cc.shortcuts.cancelRecording();
         cc.requestWidgetRepaint();
     }
@@ -391,6 +394,9 @@ pub const selectDisplayOutput = cc_keys.selectDisplayOutput;
 pub const selectedDisplayOutput = cc_keys.selectedDisplayOutput;
 pub const showingPage = cc_keys.showingPage;
 pub const focusSearch = cc_keys.focusSearch;
+pub const focusedTextField = cc_keys.focusedTextField;
+pub const pasteText = cc_keys.pasteText;
+pub const cancelPaste = cc_keys.cancelPaste;
 pub const selectKey = cc_keys.selectKey;
 
 const cc_relayout = @import("relayout.zig");

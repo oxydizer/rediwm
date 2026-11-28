@@ -511,6 +511,115 @@ def run_reload_callbacks():
     print(f"PASS: {mode} shortcut callbacks preserve their targets across reload")
 
 
+def run_text_shortcut_priority():
+    workspace = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+    mode = "workspaces" if workspace else "canvas"
+    table = "keybinds.workspace" if workspace else "keybinds"
+    with tempfile.TemporaryDirectory(prefix="rediwm-shortcut-text-") as directory:
+        tmp = Path(directory)
+        path = tmp / "rediwm-config.toml"
+        marker = tmp / "intercepted"
+        modified = tmp / "modified"
+        conflicts = ("z", "Left", "BackSpace", "Delete", "Ctrl+a", "Ctrl+c", "Ctrl+x", "Ctrl+v", "Escape")
+        config = f'[compositor]\ndesktop_mode = "{mode}"\n[{table}]\n'
+        config += "".join(f'"{chord}" = "spawn printf hit > {marker}"\n' for chord in conflicts)
+        config += f'"Super+F11" = "spawn printf hit > {modified}"\n'
+        config += '"Super+q" = "close_window"\n"Alt+F12" = "custom_command demo"\n'
+        config += '[shortcut_commands]\ndemo = "printf original-marker"\n'
+        process, log = spawn_compositor(tmp, config_content=config, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                def widgets():
+                    return ipc.get_widget_tree("control_center")["widgets"]
+
+                def click(label):
+                    widget = next(w for w in widgets() if label in (w["label"], w["name"]))
+                    box = widget["box"]
+                    panel = ipc.get_shell_state()["control_center"]["box"]
+                    ipc.click_at(round(panel["x"] + box["x"] + box["width"] / 2),
+                                 round(panel["y"] + box["y"] + box["height"] / 2))
+                    time.sleep(.15)
+
+                def modified_key(modifier, key):
+                    ipc.key(modifier, True)
+                    ipc.key_press(key)
+                    ipc.key(modifier, False)
+                    time.sleep(.15)
+
+                def length(name, expected):
+                    widget = next(w for w in widgets() if w["name"] == name)
+                    assert widget["is_focused"] and widget["text_length"] == expected, (name, expected, widget)
+
+                ipc.open_control_center()
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                click("shortcut_search")
+                ipc.key_press("z")
+                time.sleep(.15)
+                length("shortcut_search", 1)
+                ipc.key_press("z")
+                ipc.key_press("Left")
+                ipc.key_press("Delete")
+                time.sleep(.15)
+                length("shortcut_search", 1)
+                modified_key(29, "a")
+                modified_key(29, "c")
+                ipc.key_press("BackSpace")
+                time.sleep(.15)
+                length("shortcut_search", 0)
+                modified_key(29, "v")
+                length("shortcut_search", 1)
+                modified_key(29, "a")
+                modified_key(29, "x")
+                length("shortcut_search", 0)
+                modified_key(29, "v")
+                length("shortcut_search", 1)
+                modified_key(125, "F11")
+                assert modified.read_text() == "hit"
+                assert not marker.exists()
+
+                click("Clear shortcut search")
+                ipc.type_text("original-marker")
+                time.sleep(.15)
+                click("Edit command")
+                modified_key(29, "a")
+                ipc.key_press("z")
+                time.sleep(.15)
+                length("shortcut_command", 1)
+                modified_key(29, "a")
+                modified_key(29, "x")
+                length("shortcut_command", 0)
+                modified_key(29, "v")
+                length("shortcut_command", 1)
+                click("Save command")
+                assert tomllib.loads(path.read_text())["shortcut_commands"]["demo"] == "z"
+
+                click("Clear shortcut search")
+                ipc.type_text("Alt+F12")
+                time.sleep(.15)
+                click("Edit command")
+                ipc.key_down_up(1)
+                time.sleep(.15)
+                assert not any(w["name"] == "shortcut_command" for w in widgets())
+                click("Clear shortcut search")
+                click("Super+q")
+                modified_key(125, "z")
+                assert any(w["label"] == "Super+z" for w in widgets())
+                ipc.key_down_up(1)
+                time.sleep(.15)
+                assert not any(w["label"] == "Save shortcut" for w in widgets())
+                assert not marker.exists()
+                click("General")
+                ipc.key_press("z")
+                time.sleep(.2)
+                assert marker.read_text() == "hit"
+        finally:
+            stop_process(process)
+            log.close()
+    print(f"PASS: {mode} Settings text editing takes priority over conflicting shortcuts")
+
+
 if __name__ == "__main__":
     run()
     run_reload_callbacks()
+    run_text_shortcut_priority()

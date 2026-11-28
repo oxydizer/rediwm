@@ -119,6 +119,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
                 keyboard.hardware_consumed[event_keycode] = true;
                 return;
             }
+            if (keyboard.offerControlCenterText(event_keycode)) return;
             for (keyboard.bindingSyms(keycode)) |sym| {
                 const action = keyboard.server.config.lookupKeybind(wlr_keyboard.getModifiers(), sym) orelse continue;
                 if (!keybinds.isHardwareAction(action) and !(keyboard.server.locker != null and keybinds.worksWhileLocked(action))) continue;
@@ -385,7 +386,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
 
     if (keyboard.server.input.open_control_center) |cc| {
         if (cc.hasKeyboardFocus() and keyboard.server.input.open_start_menu == null) {
-            // A window like any other: compositor bindings come first.
+            // Focused text editing was offered the press before bindings.
             if (state == .pressed and !inhibited) {
                 const mods = wlr_keyboard.getModifiers();
                 for (keyboard.bindingSyms(keycode)) |sym| {

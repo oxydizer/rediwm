@@ -13,8 +13,9 @@ helpers (and `panel.ControlCenter`); `sections/` one file per page.
   focus, desktop unfocused" (`hasKeyboardFocus`). `World.focusSurface`
   deactivates a previous `.shell` window and calls `Desktop.yieldKeyboard`;
   `findFocusedToplevel` returns it.
-* Compositor bindings run before it gets keys. Pointer coordinates come from
-  `localPoint`.
+* Focused editable fields take text, Compose and editing keys before
+  configurable bindings. The recorder takes keys before field editing.
+  Pointer coordinates come from `localPoint`.
 * `close()` frees the content and `Toplevel.destroy`s the window (which may
   animate from a snapshot): clear `backend.shell.control_center` and the
   node's scene data first, and never close from inside a widget callback.

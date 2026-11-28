@@ -28,7 +28,7 @@ pub fn deinit(server: *Server) void {
         if (server.layout_autosave) |as| as.saveNow();
     }
     server.screenshot_selector.cancel();
-    @import("../clipboard.zig").cancelImageTransfers();
+    @import("../clipboard.zig").cancelTransfers();
     // Shutting down, its window is freed at once rather than animating out.
     if (server.input.open_control_center) |cc| cc.close();
     if (server.systemd_client) |client| client.destroy();

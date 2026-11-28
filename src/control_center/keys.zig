@@ -10,6 +10,7 @@ const users_section = @import("sections/users.zig");
 const bluetooth_section = @import("sections/bluetooth.zig");
 const network_section = @import("sections/network.zig");
 const settings_search = @import("search.zig");
+const clipboard = @import("../clipboard.zig");
 const Page = @import("search_index.zig").Page;
 const panel = @import("panel.zig");
 const default_width = panel.default_width;
@@ -86,7 +87,48 @@ pub fn focusSearch(cc: *ControlCenter) void {
     settings_search.focus(cc);
 }
 
+pub fn focusedTextField(cc: *const ControlCenter) ?*ui.layout.Widget {
+    const dispatcher = &ui.input.current;
+    if (dispatcher.tree != &cc.root) return null;
+    const field = dispatcher.focused orelse return null;
+    return if (field.kind == .text_input or field.kind == .secret_input) field else null;
+}
+
+pub fn cancelPaste(cc: *ControlCenter) void {
+    clipboard.cancelFor(cc);
+    cc.paste_target = null;
+}
+
+pub fn pasteText(cc: *ControlCenter) void {
+    const target = cc.focusedTextField() orelse return;
+    if (target.kind != .text_input) return;
+    cc.paste_target = target;
+    clipboard.requestText(cc.server, *ControlCenter, onPasted, cc);
+}
+
+fn onPasted(cc: *ControlCenter, body: []const u8) void {
+    const target = cc.paste_target orelse return;
+    cc.paste_target = null;
+    if (cc.focusedTextField() != target or !cc.hasKeyboardFocus() or cc.server.locker != null or
+        cc.server.polkit_dialog != null or cc.server.input.open_start_menu != null) return;
+    const line = body[0 .. std.mem.indexOfAny(u8, body, "\x00\r\n") orelse body.len];
+    if (line.len > 0 and std.unicode.utf8ValidateSlice(line)) _ = cc.selectKey(.{ .paste = line }, false);
+}
+
 pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
+    // Clipboard outcomes belong to the seat, including for the global search
+    // field, which handles the rest of its keys separately.
+    if (key == .copy or key == .cut or key == .paste) {
+        const field = cc.focusedTextField() orelse return false;
+        if (field.kind != .text_input) return true;
+        const outcome = ui.input.current.keyEvent(gpa, key, .{ .shift = shift }) catch return true;
+        if (outcome.copy) |body| {
+            defer gpa.free(body);
+            clipboard.copyText(cc.server, body);
+        }
+        cc.requestWidgetRepaint();
+        return true;
+    }
     if (settings_search.key(cc, key, shift)) return true;
     if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power and cc.page != .keys and cc.page != .shortcuts) return false;
     const dispatcher = &ui.input.current;

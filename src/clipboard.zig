@@ -1,5 +1,5 @@
-// Clipboard access for the compositor's *own* UI (the start menu's search
-// field), as distinct from `Input.zig`'s `request_set_selection`, which only
+// Clipboard access for the compositor's own UI, as distinct from
+// `Input.zig`'s `request_set_selection`, which only
 // forwards one client's selection to the seat on that client's behalf.
 //
 // Shell chrome is not a Wayland client, so it has no `wl_data_device` to work
@@ -8,7 +8,7 @@
 // - **Copy** means owning a `wlr_data_source`. wlroots gives no ready-made
 //   "here is a string" source, so `TextSource` below is one: a `DataSource`
 //   embedded at offset zero of a struct that also owns the bytes, with an
-//   `Impl` whose `send` writes them to the fd the requesting client passed.
+//   `Impl` whose `send` schedules a nonblocking write to the receiver's fd.
 // - **Paste** means being the *receiver*: hand the current
 //   `seat.selection_source` the write end of a pipe, then read the other end.
 //   That read cannot block the compositor, so it goes on the Wayland event
@@ -51,6 +51,7 @@ const TextSource = struct {
     /// impl callbacks and `@fieldParentPtr` walks from there.
     base: wlr.DataSource,
     text: []u8,
+    server: *Server,
 
     const impl: wlr.DataSource.Impl = .{
         .send = send,
@@ -64,27 +65,7 @@ const TextSource = struct {
     fn send(source: *wlr.DataSource, mime_type: [*:0]const u8, fd: i32) callconv(.c) void {
         _ = mime_type; // every type we offer is the same UTF-8 bytes
         const self: *TextSource = @fieldParentPtr("base", source);
-        defer _ = std.c.close(fd);
-
-        // The fd is whatever the requesting client passed, so this write can
-        // in principle block on a full pipe. It does not in practice: the only
-        // thing that reaches here is a one-line text field's contents, orders
-        // of magnitude under a pipe buffer. A source that could hold megabytes
-        // would need this moved onto the event loop like the paste side.
-        //
-        // The receiver may also go away mid-write (a client that asked for the
-        // selection and exited), which arrives as EPIPE. Partial writes are
-        // normal on a pipe, so loop.
-        var written: usize = 0;
-        while (written < self.text.len) {
-            const n = std.c.write(fd, self.text.ptr + written, self.text.len - written);
-            if (n > 0) {
-                written += @intCast(n);
-                continue;
-            }
-            if (n < 0 and std.posix.errno(n) == .INTR) continue;
-            break;
-        }
+        startTransfer(self.server, fd, self.text);
     }
 
     fn destroy(source: *wlr.DataSource) callconv(.c) void {
@@ -108,6 +89,7 @@ pub fn copyText(server: *Server, text: []const u8) void {
         log.err("copyText: {}", .{err});
         return;
     };
+    source.server = server;
     // `init` zeroes the mime array, so it has to come before the types go in.
     wlr.DataSource.init(&source.base, &TextSource.impl);
     for (text_mime_types) |mime| {
@@ -281,7 +263,7 @@ fn pickTextMime(source: *wlr.DataSource) ?[*:0]const u8 {
     return null;
 }
 
-// Image sends can exceed the pipe capacity. Each receiver gets an independent,
+// Clipboard sends can exceed the pipe capacity. Each receiver gets an independent,
 // nonblocking transfer whose bytes survive replacement of the clipboard source.
 const ImageSource = struct {
     base: wlr.DataSource,
@@ -305,7 +287,7 @@ const ImageSource = struct {
 
 /// Writes a copy of `bytes` to `fd` from the event loop, then closes it.
 fn startTransfer(server: *Server, fd: i32, bytes: []const u8) void {
-    const transfer = gpa.create(ImageTransfer) catch {
+    const transfer = gpa.create(Transfer) catch {
         _ = std.c.close(fd);
         return;
     };
@@ -314,26 +296,26 @@ fn startTransfer(server: *Server, fd: i32, bytes: []const u8) void {
         _ = std.c.close(fd);
         return;
     };
-    transfer.* = .{ .bytes = owned, .fd = fd, .next = image_transfers };
-    image_transfers = transfer;
+    transfer.* = .{ .bytes = owned, .fd = fd, .next = transfers };
+    transfers = transfer;
     const flags = std.c.fcntl(fd, std.c.F.GETFL, @as(c_int, 0));
     if (flags < 0 or std.c.fcntl(fd, std.c.F.SETFL, flags | @as(c_int, @bitCast(std.posix.O{ .NONBLOCK = true }))) < 0) {
         transfer.finish();
         return;
     }
-    transfer.source = server.wl_server.getEventLoop().addFd(*ImageTransfer, fd, .{ .writable = true, .hangup = true }, ImageTransfer.writable, transfer) catch {
+    transfer.source = server.wl_server.getEventLoop().addFd(*Transfer, fd, .{ .writable = true, .hangup = true }, Transfer.writable, transfer) catch {
         transfer.finish();
         return;
     };
 }
 
-const ImageTransfer = struct {
+const Transfer = struct {
     bytes: []u8,
     fd: i32,
     offset: usize = 0,
     source: ?*wl.EventSource = null,
-    next: ?*ImageTransfer = null,
-    fn writable(fd: c_int, mask: wl.EventMask, self: *ImageTransfer) c_int {
+    next: ?*Transfer = null,
+    fn writable(fd: c_int, mask: wl.EventMask, self: *Transfer) c_int {
         if (mask.hangup or mask.@"error") {
             self.finish();
             return 0;
@@ -357,8 +339,8 @@ const ImageTransfer = struct {
         if (self.offset == self.bytes.len) self.finish();
         return 0;
     }
-    fn finish(self: *ImageTransfer) void {
-        var link = &image_transfers;
+    fn finish(self: *Transfer) void {
+        var link = &transfers;
         while (link.*) |item| {
             if (item == self) {
                 link.* = self.next;
@@ -372,10 +354,10 @@ const ImageTransfer = struct {
         gpa.destroy(self);
     }
 };
-var image_transfers: ?*ImageTransfer = null;
+var transfers: ?*Transfer = null;
 
-pub fn cancelImageTransfers() void {
-    while (image_transfers) |transfer| transfer.finish();
+pub fn cancelTransfers() void {
+    while (transfers) |transfer| transfer.finish();
 }
 
 // A file selection, as the desktop copies it: one list, in the freedesktop

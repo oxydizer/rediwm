@@ -222,6 +222,7 @@ pub const ShellTarget = keyboard_shell.ShellTarget;
 pub const composeShell = keyboard_shell.composeShell;
 const ShellRepeat = keyboard_shell.ShellRepeat;
 pub const currentShellTarget = keyboard_shell.currentShellTarget;
+pub const offerControlCenterText = keyboard_shell.offerControlCenterText;
 pub const shellKeyRepeats = keyboard_shell.shellKeyRepeats;
 pub const deliverShell = keyboard_shell.deliverShell;
 pub const deliverStartMenu = keyboard_shell.deliverStartMenu;

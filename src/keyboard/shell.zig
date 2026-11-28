@@ -7,6 +7,7 @@ const xkb = @import("xkbcommon");
 const Server = @import("../Server.zig");
 const ControlCenter = @import("../control_center/panel.zig").ControlCenter;
 const StartMenu = @import("../start_menu/panel.zig").StartMenu;
+const ui = @import("ui");
 const ui_compose = @import("ui").compose;
 const Keyboard = @import("../Keyboard.zig");
 
@@ -66,7 +67,7 @@ pub fn composeShell(keyboard: *Keyboard, target: ShellTarget, sym: xkb.Keysym, m
     keyboard.compose_target = target;
     const text = keyboard.compose.feed(composeLocale(keyboard.server), @intFromEnum(sym), out) orelse return plain;
     if (text.len == 0) return null;
-    return .{ .sym = @enumFromInt(0), .utf8 = text, .composed = true };
+    return .{ .sym = @fromBackingInt(@intCast(0)), .utf8 = text, .composed = true };
 }
 
 pub const ShellRepeat = struct { code: u32, target: ShellTarget };
@@ -103,6 +104,75 @@ pub fn currentShellTarget(keyboard: *Keyboard) ?ShellTarget {
     return null;
 }
 
+fn controlCenterKey(sym: xkb.Keysym, mods: wlr.Keyboard.ModifierMask, utf8: []const u8) ?ui.input.Key {
+    const Keysym = xkb.Keysym;
+    if (mods.ctrl and !mods.alt and !mods.logo) switch (sym) {
+        Keysym.a, Keysym.A => return .select_all,
+        Keysym.c, Keysym.C => return .copy,
+        Keysym.x, Keysym.X => return .cut,
+        Keysym.v, Keysym.V => return .{ .paste = "" },
+        else => {},
+    };
+    return switch (sym) {
+        Keysym.Escape => .escape,
+        Keysym.Return, Keysym.KP_Enter => .enter,
+        Keysym.BackSpace => .backspace,
+        Keysym.Delete => .delete,
+        Keysym.Left => .left,
+        Keysym.Right => .right,
+        Keysym.Up => .up,
+        Keysym.Down => .down,
+        Keysym.Home => .home,
+        Keysym.End => .end,
+        Keysym.Page_Up => .page_up,
+        Keysym.Page_Down => .page_down,
+        Keysym.Tab, Keysym.ISO_Left_Tab => .tab,
+        else => if (!mods.ctrl and !mods.alt and !mods.logo and utf8.len > 0 and utf8[0] >= 32 and utf8[0] != 127)
+            .{ .char = utf8 }
+        else
+            null,
+    };
+}
+
+pub fn offerControlCenterText(keyboard: *Keyboard, event_keycode: u32) bool {
+    const target = keyboard.currentShellTarget() orelse return false;
+    if (target != .control_center or target.control_center.focusedTextField() == null) return false;
+    const server = keyboard.server;
+    const wlr_keyboard = keyboard.device.toKeyboard();
+    const mods = wlr_keyboard.getModifiers();
+    if (mods.alt or mods.logo) return false;
+    const keycode = event_keycode + 8;
+    const state = wlr_keyboard.xkb_state orelse return false;
+    const sym = state.keyGetOneSym(keycode);
+    if (sym == xkb.Keysym.Escape and server.input.dock_drag.reordering()) return false;
+    if (server.input.shortcuts_inhibit.inhibiting()) {
+        for (keyboard.bindingSyms(keycode)) |binding_sym| {
+            const action = server.config.lookupKeybind(mods, binding_sym) orelse continue;
+            if (action == .restore_shortcuts) return false;
+        }
+    }
+
+    var buf: [64]u8 = @splat(0);
+    defer @import("../session/lock.zig").clearKeyScratch(&buf);
+    const n = state.keyGetUtf8(keycode, &buf);
+    const utf8 = if (n > 0 and n < buf.len) buf[0..@intCast(n)] else "";
+    const composing = !mods.ctrl and (ui_compose.startsSequence(@backingInt(sym)) or
+        (keyboard.compose_target != null and keyboard.compose_target.?.eql(target) and keyboard.compose.pending()));
+    const find = mods.ctrl and (sym == xkb.Keysym.f or sym == xkb.Keysym.F);
+    if (!composing and !find) {
+        const key = controlCenterKey(sym, mods, utf8) orelse return false;
+        // Modified Tab and Enter remain available to application switching
+        // and other shortcuts.
+        if (mods.ctrl and (key == .tab or key == .enter or key == .escape)) return false;
+    }
+
+    const repeats = keyboard.shellKeyRepeats(event_keycode, target);
+    if (event_keycode < keyboard.shortcut_consumed.len) keyboard.shortcut_consumed[event_keycode] = true;
+    keyboard.deliverShell(target, event_keycode);
+    if (repeats) keyboard.armShellRepeat(event_keycode, target);
+    return true;
+}
+
 /// Whether holding `event_keycode` should repeat it into `target`: the keymap
 /// says the key repeats, repeat is on, no Ctrl, Alt or Super is held (those
 /// are commands, not typing), and the target accepts the key where its focus
@@ -130,10 +200,7 @@ pub fn shellKeyRepeats(keyboard: *Keyboard, event_keycode: u32, target: ShellTar
         .polkit => if (server.polkit_dialog) |dialog| dialog.keyRepeats(sym, utf8) else false,
         .lock => if (server.locker) |lock| lock.keyRepeats(sym, utf8) else false,
         .control_center => |cc| blk: {
-            if (cc.search.initialized and @import("ui").input.current.focused == &cc.search.field) break :blk @import("../input/repeat_keys.zig").editing(sym, utf8);
-            if (cc.page == .network) if (@import("ui").input.current.focused) |widget| {
-                if (widget.kind == .text_input or widget.kind == .secret_input) break :blk @import("../input/repeat_keys.zig").editing(sym, utf8);
-            };
+            if (cc.focusedTextField() != null) break :blk @import("../input/repeat_keys.zig").editing(sym, utf8);
             break :blk @import("../input/repeat_keys.zig").navigation(sym);
         },
         .start_menu => |sm| sm.keyRepeats(sym, utf8),
@@ -169,23 +236,9 @@ pub fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32
                 cc.focusSearch();
                 break;
             }
-            const key: ?@import("ui").input.Key = switch (sym) {
-                xkb.Keysym.Escape => .escape,
-                xkb.Keysym.Return, xkb.Keysym.KP_Enter => .enter,
-                xkb.Keysym.BackSpace => .backspace,
-                xkb.Keysym.Delete => .delete,
-                xkb.Keysym.Left => .left,
-                xkb.Keysym.Right => .right,
-                xkb.Keysym.Up => .up,
-                xkb.Keysym.Down => .down,
-                xkb.Keysym.Home => .home,
-                xkb.Keysym.End => .end,
-                xkb.Keysym.Page_Up => .page_up,
-                xkb.Keysym.Page_Down => .page_down,
-                xkb.Keysym.Tab, xkb.Keysym.ISO_Left_Tab => .tab,
-                else => if (mods.ctrl and (sym == xkb.Keysym.a or sym == xkb.Keysym.A)) .select_all else if (mods.ctrl and (sym == xkb.Keysym.c or sym == xkb.Keysym.C or sym == xkb.Keysym.x or sym == xkb.Keysym.X or sym == xkb.Keysym.v or sym == xkb.Keysym.V)) null else if (utf8.len > 0) .{ .char = utf8 } else null,
-            };
-            if (key) |k| _ = cc.selectKey(k, mods.shift);
+            if (controlCenterKey(sym, mods, utf8)) |key| {
+                if (key == .paste) cc.pasteText() else _ = cc.selectKey(key, mods.shift);
+            }
         },
         .wifi => |popup| if (syms.len > 0) popup.key(syms[0], utf8, mods),
         .start_menu => |sm| _ = keyboard.deliverStartMenu(sm, event_keycode, .pressed),

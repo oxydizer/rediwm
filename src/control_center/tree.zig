@@ -47,6 +47,7 @@ const ControlCenter = @import("ControlCenter.zig");
 const paintNavHighlights = ControlCenter.paintNavHighlights;
 
 pub fn buildTree(cc: *ControlCenter) void {
+    cc.cancelPaste();
     if (cc.is_welcome) {
         ui.input.reset();
         cc.content_children[0] = welcome_section.build(cc);
