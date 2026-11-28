@@ -10,6 +10,12 @@ the one for the directory you work in: `src/files`, `src/editor`,
 
 ## Working rules
 
+* Create development worktrees under ~/Projects/rediwm-<feature> on
+  permanent storage. Never use /tmp, /var/tmp or other temporary storage
+  for development worktrees. On the development machine, /tmp is tmpfs.
+  Temporary storage is only for disposable fixtures and experiments.
+* Use dedicated worktrees for concurrent development tasks. Do not
+  disturb existing worktrees.
 * Keep this file to cross-cutting rules and pointers; put detailed subsystem
   notes in the linked documents or the area’s `AGENTS.md`.
 * Tool use is costly: no tight polling (wait 15–30 s between checks of long
