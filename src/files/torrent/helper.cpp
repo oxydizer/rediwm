@@ -76,6 +76,12 @@ static void diagnose_alert(lt::alert const *alert) {
     kind = "listen failed";
   else if (lt::alert_cast<lt::udp_error_alert>(alert))
     kind = "UDP error";
+  else if (lt::alert_cast<lt::torrent_paused_alert>(alert))
+    kind = "torrent paused";
+  else if (lt::alert_cast<lt::cache_flushed_alert>(alert))
+    kind = "cache flushed";
+  else if (lt::alert_cast<lt::torrent_removed_alert>(alert))
+    kind = "torrent removed";
 
   if (kind)
     std::cerr << "Transfers: [" << kind << "] "
@@ -133,9 +139,11 @@ void advance_deletion(Transfer &t) {
 
   if (t.handle.status().flags & lt::torrent_flags::paused) {
     // An already paused torrent may not emit another pause alert.
+    std::cerr << "Deletion: " << t.id << " waiting_flush\n";
     t.deletion_phase = DeletionPhase::waiting_flush;
     t.handle.flush_cache();
   } else {
+    std::cerr << "Deletion: " << t.id << " waiting_pause\n";
     t.deletion_phase = DeletionPhase::waiting_pause;
     t.handle.pause();
   }
@@ -233,7 +241,8 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
       continue;
     try {
       if (t->deletion_phase == DeletionPhase::waiting_disk &&
-          lt::alert_cast<lt::cache_flushed_alert>(alert)) {
+          lt::alert_cast<lt::torrent_removed_alert>(alert)) {
+        std::cerr << "Deletion: " << t->id << " ready\n";
         t->deletion_phase = DeletionPhase::ready;
         t->handle = {};
         continue;
@@ -241,6 +250,7 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
 
       if (t->deletion_phase == DeletionPhase::waiting_pause &&
           lt::alert_cast<lt::torrent_paused_alert>(alert)) {
+        std::cerr << "Deletion: " << t->id << " waiting_flush\n";
         t->deletion_phase = DeletionPhase::waiting_flush;
         t->handle.flush_cache();
         continue;
@@ -252,6 +262,7 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
           throw std::runtime_error("Torrent resumed during deletion");
         t->cache_transfer();
         t->cached.flags |= lt::torrent_flags::paused;
+        std::cerr << "Deletion: " << t->id << " waiting_disk\n";
         t->deletion_phase = DeletionPhase::waiting_disk;
         session->remove_torrent(t->handle);
         continue;

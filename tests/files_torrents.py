@@ -72,7 +72,7 @@ def run():
         seed = lt.session({'listen_interfaces': '127.0.0.1:0', 'enable_dht': False,
                            'enable_lsd': False, 'enable_upnp': False, 'enable_natpmp': False,
                            'enable_outgoing_utp': False, 'enable_incoming_utp': False,
-                           'upload_rate_limit': 65536, 'alert_mask': 0x7fffffff, 'allow_multiple_connections_per_ip': True})
+                           'upload_rate_limit': 65536, 'allow_multiple_connections_per_ip': True})
         class Tracker(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 port = int(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('port', ['0'])[0])
@@ -223,6 +223,7 @@ def run():
 
             # Deleting an actively downloading torrent must stop writes,
             # preserve the partial payload and retain verified progress.
+            seeding.set_upload_limit(16384)
             active_dest = tmp/'delete-active'
             active_dest.mkdir()
             client.send(op='add', source=str(torrent_path),
@@ -282,8 +283,8 @@ def run():
             (state/f'{active_id}.ini').unlink()
             (state/f'{active_id}.resume').unlink(missing_ok=True)
             helper = launch(); client = Client(runtime)
-            assert not client.until(lambda r: r if r else True,
-                                    'active fixture cleared'), 'unexpected transfer'
+            client.send(op='list')
+            client.until(lambda r: not r, 'active fixture cleared')
 
             # A user-paused torrent takes the flush path directly.
             paused_dest = tmp/'delete-paused'
@@ -371,7 +372,6 @@ def run():
             print('PASS: inspection, file selection and reselection, real transfer, background lifetime, crash recovery, magnet metadata, seeding, persistence, pause/resume, removal and no-clobber publication')
         except Exception:
             log.flush(); log.seek(0); print(log.read(), file=sys.stderr)
-            print('\n'.join(a.message() for a in seed.pop_alerts() if 'peer' in a.what()), file=sys.stderr)
             raise
         finally:
             if helper and helper.poll() is None:
