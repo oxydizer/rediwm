@@ -353,6 +353,78 @@ pub const CommandSnapshot = struct {
     }
 };
 
+/// Persist one shortcut slot using the same validated, atomic replacement
+/// as other Control Center shortcut edits.
+pub fn saveSlot(
+    a: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const loader.Config,
+    mode: loader.DesktopMode,
+    action: keys.Action,
+    slot: slots.Slot,
+    replacement: ?keys.Keybind,
+    command: ?CommandSnapshot,
+) !void {
+    if (cfg.path.len == 0) return error.NoConfigPath;
+
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    const original = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        cfg.path,
+        scratch,
+        .limited(1 << 20),
+    );
+    var current = try loader.parse(scratch, original, cfg.path);
+    defer current.deinit();
+    current.compositor.desktop_mode = mode;
+
+    const expected_binds = if (mode.tiled())
+        cfg.workspace_keybinds
+    else
+        cfg.keybinds;
+    if (!sameBindings(current.activeKeybinds(), expected_binds))
+        return error.ConfigChanged;
+
+    const expected_slots = if (mode.tiled())
+        cfg.workspace_shortcut_slots.get(action)
+    else
+        cfg.shortcut_slots.get(action);
+    const actual_slots = current.storedShortcutSlots(action);
+    if ((expected_slots == null) != (actual_slots == null))
+        return error.ConfigChanged;
+    if (expected_slots) |expected| {
+        if (!expected.eql(actual_slots.?))
+            return error.ConfigChanged;
+    }
+
+    if (command) |snapshot| {
+        if (!snapshot.matches(&current))
+            return error.ConfigChanged;
+    }
+    if (action == .custom_command) {
+        const id = action.custom_command;
+        const expected = cfg.shortcut_commands.get(id) orelse
+            return error.ConfigChanged;
+        const actual = current.shortcut_commands.get(id) orelse
+            return error.ConfigChanged;
+        if (!std.mem.eql(u8, expected, actual))
+            return error.ConfigChanged;
+    }
+
+    const result = try patchSlot(
+        scratch,
+        original,
+        &current,
+        action,
+        slot,
+        replacement,
+    );
+    try writeConfig(scratch, io, cfg.path, result);
+}
+
 pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, mode: loader.DesktopMode, command: ?CommandSnapshot) !void {
     var changes: [2]keys.Keybind = undefined;
     return saveChanges(a, io, path, binds, bindingChanges(binds, index, replacement, &changes), mode, command);
