@@ -7,8 +7,10 @@ const usage =
     \\Usage: rediwm-terminal [-e COMMAND [ARGUMENT...]]
     \\
     \\RediTerm, a terminal for RediWM. Starts your shell in the current
-    \\directory, or runs COMMAND instead; the window closes when it exits.
+    \\directory, or runs COMMAND in the first tab. The window closes when
+    \\its last tab exits.
     \\
+    \\Ctrl+Shift+T / Ctrl+Shift+W: open / close tab
     \\Ctrl+Shift+C / Ctrl+Shift+V: copy / paste    Shift+Insert: paste
     \\Shift+Page Up / Page Down: scroll history    Shift: select over mouse-aware programs
     \\

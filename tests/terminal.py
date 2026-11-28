@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RediTerm in a private compositor: shell I/O, title, clipboard and color.
+"""RediTerm in a private compositor: shell I/O, tabs, clipboard and color.
 
 Commands and the PTY probe write files. Color swatches are checked by pixel
 value, so no OCR or font-specific goldens are needed.
@@ -18,6 +18,7 @@ from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
 from xwayland_support import wait_for
 
 CTRL, SHIFT, ENTER, KEY_C, KEY_V, SPACE = 29, 42, 28, 46, 47, 57
+KEY_T, KEY_W = 20, 17
 CURSOR_RGB = (252, 203, 150)
 
 COLOR_PROBE = r"""
@@ -162,6 +163,29 @@ def main():
                     path = work / name
                     return path.read_text() if path.exists() else None
 
+                def title(expected):
+                    wait_for(lambda: len(windows()) == 1 and windows()[0]["title"] == expected,
+                             f"expected one terminal window titled {expected!r}")
+
+                def tab_widget(name):
+                    widgets = ipc.get_widget_tree(f"window/{win['id']}")["widgets"]
+                    return next((widget for widget in widgets if widget["name"] == name), None)
+
+                def click_tab_widget(name):
+                    box = wait_for(lambda: tab_widget(name), f"titlebar tab control {name} missing")["global_box"]
+                    ipc.click_at(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)
+
+                def menu_new_tab(fullscreen=False):
+                    debug = ipc.get_window_debug(win["id"])
+                    client = debug["client_box"]
+                    if fullscreen:
+                        ipc.click_at(client["x"] + 20, client["y"] + 19)
+                    else:
+                        chrome = debug["chrome_box"]
+                        ipc.click_at(chrome["x"] + 18, chrome["y"] + debug["titlebar_height"] // 2)
+                    ipc.wait_for_frame()
+                    ipc.click_at(client["x"] + 55, client["y"] + (66 if fullscreen else 28))
+
                 app = launch()
                 ipc.wait_for("window_mapped", app_id="rediwm-terminal")
                 win = windows()[0]
@@ -209,7 +233,46 @@ def main():
                     ipc.key_down_up(ENTER)
                     wait_for(lambda: read("external.txt") == "external", "an external paste did not arrive")
 
-                # The shell's exit closes the window.
+                # The menu makes a new shell in the same window. A hidden tab
+                # still drains its PTY, including output larger than the tty buffer.
+                run("tab_value=original; (while [ ! -e drain ]; do sleep .05; done; "
+                    "yes background | head -n 5000; printf '\\033]2;first tab drained\\007'; touch drained) &")
+                wait_for(lambda: tab_widget("tab_new"), "the titlebar strip did not appear")
+                menu_new_tab()
+                title("RediTerm")
+                run("printf '%s' \"${tab_value-unset}\" > tab-value.txt; touch drain; printf '\\033]2;second tab\\007'")
+                title("second tab")
+                assert read("tab-value.txt") == "unset", read("tab-value.txt")
+                wait_for(lambda: (work / "drained").exists(), "the hidden PTY stopped draining")
+
+                click_tab_widget("tab_new")
+                title("RediTerm")
+                run("printf '\\033]2;third tab\\007'")
+                title("third tab")
+
+                ipc.fullscreen(win["id"])
+                wait_for(lambda: ipc.get_window_debug(win["id"])["fullscreen"], "terminal did not enter fullscreen")
+                ipc.wait_for("window_geometry_settled", window_id=win["id"])
+                menu_new_tab(fullscreen=True)
+                title("RediTerm")
+                run("printf '\\033]2;fourth tab\\007'")
+                title("fourth tab")
+                ipc.fullscreen(win["id"])
+                wait_for(lambda: not ipc.get_window_debug(win["id"])["fullscreen"], "terminal did not leave fullscreen")
+                ipc.wait_for("window_geometry_settled", window_id=win["id"])
+
+                click_tab_widget("tab/1")
+                title("first tab drained")
+                run("printf '%s' \"$tab_value\" > original-value.txt")
+                wait_for(lambda: read("original-value.txt") == "original", "the first shell lost its state")
+                click_tab_widget("tab/4/close")
+                wait_for(lambda: tab_widget("tab/4") is None, "the background tab did not close")
+                title("first tab drained")
+                run("exit")
+                title("second tab")
+                chord(CTRL, SHIFT, KEY_W)
+                title("third tab")
+                # The final shell's exit closes the window.
                 run("exit")
                 ipc.wait_for("window_closed", window_id=win["id"])
                 assert app.wait(timeout=5) == 0
@@ -244,7 +307,7 @@ def main():
                 ipc.wait_for("window_closed", window_id=win["id"])
                 assert app.wait(timeout=5) == 0
 
-                # Closing the window hangs up a running shell.
+                # Closing the window hangs up every running shell.
                 app = launch()
                 ipc.wait_for("window_mapped", app_id="rediwm-terminal")
                 win = windows()[0]
@@ -254,11 +317,17 @@ def main():
                 run("exec sh -c 'trap \"echo hup > hup.txt; exit 0\" HUP; echo ready > ready.txt; "
                     "while :; do sleep 1; done'")
                 wait_for(lambda: read("ready.txt") == "ready\n", "the shell did not start")
+                chord(CTRL, SHIFT, KEY_T)
+                wait_for(lambda: tab_widget("tab/2"), "the new tab shortcut did not open a shell")
+                run("exec sh -c 'trap \"echo hup > hup2.txt; exit 0\" HUP; echo ready > ready2.txt; "
+                    "while :; do sleep 1; done'")
+                wait_for(lambda: read("ready2.txt") == "ready\n", "the second shell did not start")
                 ipc.close_window(win["id"])
                 ipc.wait_for("window_closed", window_id=win["id"])
                 assert app.wait(timeout=5) == 0
                 assert read("hup.txt") == "hup\n", "the shell was not hung up"
-                print("RediTerm: shell, title, clipboard, -e, colors, caret glide and close passed")
+                assert read("hup2.txt") == "hup\n", "the second shell was not hung up"
+                print("RediTerm: tabs, shell, title, clipboard, -e, colors, caret glide and close passed")
         finally:
             for app in apps:
                 if app.poll() is None:

@@ -18,7 +18,8 @@
 //! (surface units, positive dy is down);
 //!   themeChanged(*App) after a live theme reload (a frame follows anyway);
 //!   pollFds(*App, []c.struct_pollfd) usize to add up to 8 descriptors of the
-//!   App's own to the loop, pollReady(*App, []const c.struct_pollfd) called
+//!   App's own to the loop (override the capacity with `poll_slots`),
+//!   pollReady(*App, []const c.struct_pollfd) called
 //!   with them (and their revents, zero on a timeout) after every poll, and
 //!   timeoutMs(*App, now_ms: i64) ?i64 for the App's next deadline;
 //!   pasteText(*App, []const u8) for a plain-text clipboard, with fields
@@ -33,6 +34,8 @@
 //!   animating: bool, set (in render or frameDamage) while an animation needs
 //!   another frame: the commit asks for a frame callback and its arrival sets
 //!   `dirty`, so animations step with the display instead of a timer.
+//!   titlebarTabHandler(*App) ui.client_tabs.Handler, setTitlebarTabs(*App, bool)
+//!   and publishTitlebarTabs(*App, *ui.client_tabs) for a client-owned tab strip.
 //! getTitle is read every loop iteration and the title resent when it changes.
 //! Set `dirty` to get a frame; set `closed` to quit.
 const std = @import("std");
@@ -105,6 +108,8 @@ pub fn Host(comptime App: type) type {
         xdg_toplevel: *xdg.Toplevel = undefined,
         decoration: ?*zxdg.ToplevelDecorationV1 = null,
         decoration_mode: DecorationMode = .unknown,
+        fullscreen: bool = false,
+        tabs: ui.client_tabs = .{},
         pointer_x: f64 = 0,
         pointer_y: f64 = 0,
         cursor_shape: ClientCursor = .{},
@@ -137,6 +142,8 @@ pub fn Host(comptime App: type) type {
         frame_callback: ?*wl.Callback = null,
 
         const has_clipboard = @hasDecl(App, "pasteText");
+        const has_tabs = @hasDecl(App, "titlebarTabHandler");
+        const poll_slots = if (@hasDecl(App, "poll_slots")) App.poll_slots else app_poll_slots;
         pub const has_damage = @hasDecl(App, "frameDamage");
         pub const has_animation = @hasField(App, "animating");
 
@@ -169,6 +176,7 @@ pub fn Host(comptime App: type) type {
                 .global => |g| {
                     const iface = std.mem.span(g.interface);
                     self.cursor_shape.bind(registry, g.name, iface, g.version);
+                    if (has_tabs) self.tabs.bind(registry, g.name, iface, g.version);
                     if (std.mem.eql(u8, iface, "wl_compositor")) {
                         self.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 5)) catch null;
                     } else if (std.mem.eql(u8, iface, "wl_shm")) {
@@ -300,6 +308,10 @@ pub fn Host(comptime App: type) type {
             return if (self.wantsCsd()) CSD_TITLEBAR_H else 0;
         }
 
+        fn updateTitlebarTabs(self: *Client) void {
+            if (has_tabs) self.app.setTitlebarTabs(self.tabs.strip != null and !self.wantsCsd() and !self.fullscreen);
+        }
+
         fn decorationEvent(_: *zxdg.ToplevelDecorationV1, event: zxdg.ToplevelDecorationV1.Event, self: *Client) void {
             switch (event) {
                 .configure => |ev| {
@@ -308,6 +320,7 @@ pub fn Host(comptime App: type) type {
                         .client_side => .client_side,
                         else => .client_side,
                     };
+                    self.updateTitlebarTabs();
                     self.invalidate();
                 },
             }
@@ -316,6 +329,13 @@ pub fn Host(comptime App: type) type {
         fn xdgToplevelEvent(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Client) void {
             switch (event) {
                 .configure => |ev| {
+                    var suspended = false;
+                    if (has_tabs) self.fullscreen = false;
+                    for (ev.states.slice(u32)) |state| {
+                        if (state == @backingInt(xdg.Toplevel.State.suspended)) suspended = true;
+                        if (has_tabs and state == @backingInt(xdg.Toplevel.State.fullscreen)) self.fullscreen = true;
+                    }
+                    self.updateTitlebarTabs();
                     const tbh = self.titlebarHeight();
                     const o = self.options;
                     if (ev.width > 0 and ev.height > 0) {
@@ -328,10 +348,6 @@ pub fn Host(comptime App: type) type {
                         if (output.h > 0) height = std.math.clamp(output.h - 200, o.min_height, @max(o.min_height, o.default_height));
                         self.app.resize(width, height);
                     }
-                    var suspended = false;
-                    for (ev.states.slice(u32)) |state| if (state == @backingInt(xdg.Toplevel.State.suspended)) {
-                        suspended = true;
-                    };
                     self.app.setSuspended(suspended);
                     self.xdg_toplevel.setMinSize(o.min_width, o.min_height + tbh);
                     self.invalidate();
@@ -528,6 +544,7 @@ pub fn Host(comptime App: type) type {
             if (self.frame_callback) |callback| callback.destroy();
             if (self.title) |title| a.free(title);
             self.clipboard.deinit();
+            if (has_tabs) self.tabs.deinit();
             self.outputs.deinit();
             if (self.xkb_state) |state| c.xkb_state_unref(state);
             if (self.xkb_context) |context| c.xkb_context_unref(context);
@@ -596,6 +613,7 @@ pub fn Host(comptime App: type) type {
             self.xdg_toplevel = try self.xdg_surface.getToplevel();
             defer self.xdg_toplevel.destroy();
             self.xdg_toplevel.setListener(*Client, xdgToplevelEvent, &self);
+            if (has_tabs) self.tabs.attach(self.surface, self.app.titlebarTabHandler());
 
             self.xdg_toplevel.setAppId(options.app_id);
             self.syncTitle();
@@ -637,6 +655,7 @@ pub fn Host(comptime App: type) type {
                 if (!self.running) break;
 
                 self.syncTitle();
+                if (has_tabs) self.app.publishTitlebarTabs(&self.tabs);
                 self.syncClipboard();
                 try self.render();
 
@@ -660,7 +679,7 @@ pub fn Host(comptime App: type) type {
                 }
 
                 // Display, theme watch, clipboard transfers, then the App's own.
-                var fds: [2 + clipboard_slots + app_poll_slots]c.struct_pollfd = undefined;
+                var fds: [2 + clipboard_slots + poll_slots]c.struct_pollfd = undefined;
                 fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
                 fds[1] = .{ .fd = watch.fd(), .events = c.POLLIN, .revents = 0 };
                 self.clipboard.pollFds(fds[2..][0..clipboard_slots]);
@@ -686,7 +705,7 @@ pub fn Host(comptime App: type) type {
                 if (self.clipboard.dispatch()) |value| {
                     var received = value;
                     defer received.deinit();
-                    if (has_clipboard) self.app.pasteText(received.bytes.items);
+                    if (has_clipboard and !self.app.paste_requested) self.app.pasteText(received.bytes.items);
                 }
                 if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
                 if (@hasDecl(App, "pollReady")) self.app.pollReady(app_fds[0..app_count]);
