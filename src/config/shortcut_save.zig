@@ -533,6 +533,145 @@ fn writeConfig(a: std.mem.Allocator, io: std.Io, path: []const u8, result: []con
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
 }
 
+test "saveSlot persists independent primary and alternate slots" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "close_window"
+        \\"Ctrl+F12" = "close_window"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", "Alt+F4"]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+    try saveSlot(a, io, &before, .canvas, .close_window, .primary, null, null);
+
+    const saved = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(saved);
+    var after = try loader.parse(a, saved, path);
+    defer after.deinit();
+
+    const assigned = after.storedShortcutSlots(.close_window).?;
+    const alt = try keys.parseKeybind("Alt+F4");
+    const overflow = try keys.parseKeybind("Ctrl+F12");
+    try std.testing.expect(assigned.primary == null);
+    try std.testing.expectEqual(
+        @as(?slots.Chord, keys.pack(alt.modifiers, alt.sym)),
+        assigned.alternate,
+    );
+    try std.testing.expect(slots.owns(
+        after.activeKeybinds(), .close_window,
+        keys.pack(overflow.modifiers, overflow.sym),
+    ));
+}
+
+test "saveSlot rejects stale slot metadata without changing the file" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "close_window"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", "Alt+F4"]
+        \\
+    ;
+    const changed =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "close_window"
+        \\[shortcut_slots]
+        \\"close_window" = ["Alt+F4", "Super+q"]
+        \\
+    ;
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+    var snapshot = try loader.parse(a, original, path);
+    defer snapshot.deinit();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = changed });
+    try std.testing.expectError(
+        error.ConfigChanged,
+        saveSlot(a, io, &snapshot, .canvas, .close_window, .primary, null, null),
+    );
+
+    const actual = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(actual);
+    try std.testing.expectEqualStrings(changed, actual);
+}
+
+test "saveSlot rejects stale custom commands without changing the file" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const original =
+        \\[keybinds]
+        \\"Super+F12" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo original"
+        \\[shortcut_slots]
+        \\"custom_command demo" = ["Super+F12", ""]
+        \\
+    ;
+    const changed =
+        \\[keybinds]
+        \\"Super+F12" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo edited"
+        \\[shortcut_slots]
+        \\"custom_command demo" = ["Super+F12", ""]
+        \\
+    ;
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+    var snapshot = try loader.parse(a, original, path);
+    defer snapshot.deinit();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = changed });
+    try std.testing.expectError(
+        error.ConfigChanged,
+        saveSlot(
+            a, io, &snapshot, .canvas,
+            .{ .custom_command = "demo" }, .primary, null, null,
+        ),
+    );
+
+    const actual = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(actual);
+    try std.testing.expectEqualStrings(changed, actual);
+}
 test "editing a command retains both mode bindings and deletion removes only its references" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
