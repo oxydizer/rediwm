@@ -103,6 +103,86 @@ const CommandEditor = struct {
     }
 };
 
+const InlineCommand = struct {
+    id: []const u8,
+    original: []const u8,
+    data: ui.layout.TextInputData,
+    widget: ?*W = null,
+
+    fn capture(entry: *InlineCommand) void {
+        if (entry.widget) |widget| {
+            entry.data = widget.kind.text_input;
+        }
+        entry.widget = null;
+    }
+
+    fn current(entry: *const InlineCommand) ui.layout.TextInputData {
+        if (entry.widget) |widget| return widget.kind.text_input;
+        return entry.data;
+    }
+
+    fn isDirty(entry: *const InlineCommand) bool {
+        return !std.mem.eql(
+            u8,
+            entry.original,
+            entry.current().value,
+        );
+    }
+
+    fn sync(entry: *InlineCommand, command: []const u8) !void {
+        if (entry.isDirty()) return;
+        if (std.mem.eql(u8, entry.original, command)) return;
+
+        const original = try gpa.dupe(u8, command);
+        errdefer gpa.free(original);
+        const value = try gpa.dupe(u8, command);
+
+        gpa.free(entry.original);
+        gpa.free(entry.current().value);
+
+        entry.original = original;
+        entry.data.value = value;
+        entry.data.cursor_pos = value.len;
+        entry.data.selection_anchor = null;
+        if (entry.widget) |widget| {
+            widget.kind.text_input = entry.data;
+            widget.markDirty();
+        }
+    }
+
+    fn changed(ctx: ?*anyopaque, _: usize, _: []const u8) void {
+        const cc: *panel.ControlCenter = @ptrCast(@alignCast(ctx orelse return));
+        if (cc.shortcut_autosave_timer) |timer| {
+            timer.timerUpdate(2000) catch {};
+        }
+    }
+
+    fn init(id: []const u8, command: []const u8) !InlineCommand {
+        const owned_id = try gpa.dupe(u8, id);
+        errdefer gpa.free(owned_id);
+        const original = try gpa.dupe(u8, command);
+        errdefer gpa.free(original);
+        const value = try gpa.dupe(u8, command);
+
+        return .{
+            .id = owned_id,
+            .original = original,
+            .data = .{
+                .value = value,
+                .cursor_pos = value.len,
+                .placeholder = i18n.tr("Executable and arguments"),
+                .on_change = changed,
+            },
+        };
+    }
+
+    fn deinit(entry: *InlineCommand) void {
+        gpa.free(entry.id);
+        gpa.free(entry.original);
+        gpa.free(entry.current().value);
+    }
+};
+
 pub const Section = struct {
     // Callback targets live with their widget tree. Recording spans rebuilds
     // and owns a separate copy until it is saved or cancelled.
@@ -116,6 +196,7 @@ pub const Section = struct {
     command_editor: ?CommandEditor = null,
     command_field: W = .{ .kind = .container },
     command_field_visible: bool = false,
+    inline_commands: std.ArrayList(*InlineCommand) = .empty,
     collapsed: [names.len]bool = @splat(false),
     targets: std.ArrayList(Target) = .empty,
     editing: ?Target = null,
@@ -129,11 +210,133 @@ pub const Section = struct {
     held_mods: wlr.Keyboard.ModifierMask = .{},
 
     pub fn deinit(s: *Section) void {
+        for (s.inline_commands.items) |entry| {
+            entry.deinit();
+            gpa.destroy(entry);
+        }
+        s.inline_commands.deinit(gpa);
         s.closeCommandEditor();
         if (s.command_field.kind == .text_input) gpa.free(s.command_field.kind.text_input.value);
         if (s.search_field.kind == .text_input) gpa.free(s.search_field.kind.text_input.value);
         s.arena.deinit();
         s.editing_arena.deinit();
+    }
+
+    fn inlineCommand(
+        s: *Section,
+        id: []const u8,
+        command: []const u8,
+    ) !*InlineCommand {
+        for (s.inline_commands.items) |entry| {
+            if (std.mem.eql(u8, entry.id, id)) {
+                try entry.sync(command);
+                return entry;
+            }
+        }
+
+        const entry = try gpa.create(InlineCommand);
+        errdefer gpa.destroy(entry);
+
+        entry.* = try InlineCommand.init(id, command);
+        errdefer entry.deinit();
+
+        try s.inline_commands.append(gpa, entry);
+        return entry;
+    }
+
+    fn saveInlineCommand(
+        cc: *panel.ControlCenter,
+        entry: *InlineCommand,
+    ) !void {
+        if (!entry.isDirty()) return;
+
+        const config = &cc.server.config;
+        const current = config.shortcut_commands.get(entry.id) orelse
+            return error.CommandChanged;
+        if (!std.mem.eql(u8, current, entry.original))
+            return error.CommandChanged;
+
+        const value = entry.current().value;
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        _ = @import("../../config_runtime/actions.zig").customCommandArgs(cc.server, arena.allocator(), value) catch
+            return error.InvalidCommand;
+
+        const original = try gpa.dupe(u8, value);
+        errdefer gpa.free(original);
+
+        try saving.saveCustomCommand(
+            gpa,
+            cc.server.io,
+            config,
+            entry.id,
+            value,
+        );
+
+        gpa.free(entry.original);
+        entry.original = original;
+    }
+
+    pub fn commitInline(
+        s: *Section,
+        cc: *panel.ControlCenter,
+        focused: ?*W,
+    ) bool {
+        const widget = focused orelse return false;
+        for (s.inline_commands.items) |entry| {
+            if (widget != entry.widget) continue;
+            if (!entry.isDirty()) return true;
+
+            saveInlineCommand(cc, entry) catch |err| {
+                s.message = switch (err) {
+                    error.InvalidCommand => i18n.tr("Invalid command"),
+                    error.CommandChanged => i18n.tr("Command changed externally"),
+                    else => i18n.tr("Could not save command"),
+                };
+                cc.refresh();
+                return true;
+            };
+
+            s.message = "";
+            @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
+            cc.refresh();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn autosaveInline(s: *Section, cc: *panel.ControlCenter) void {
+        var saved = false;
+        for (s.inline_commands.items) |entry| {
+            if (!entry.isDirty()) continue;
+            saveInlineCommand(cc, entry) catch |err| {
+                s.message = switch (err) {
+                    error.InvalidCommand => i18n.tr("Invalid command"),
+                    error.CommandChanged => i18n.tr("Command changed externally"),
+                    else => i18n.tr("Could not save command"),
+                };
+                continue;
+            };
+            saved = true;
+            @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
+        }
+        if (saved or s.message.len != 0) cc.refresh();
+    }
+
+    pub fn focusedInlineId(s: *Section, focused: ?*W) ?[]const u8 {
+        const widget = focused orelse return null;
+        for (s.inline_commands.items) |entry| {
+            if (widget == entry.widget) return entry.id;
+        }
+        return null;
+    }
+
+    pub fn visibleInlineField(s: *Section, id: []const u8) ?*W {
+        for (s.inline_commands.items) |entry| {
+            if (std.mem.eql(u8, entry.id, id))
+                return entry.widget;
+        }
+        return null;
     }
 
     pub fn cancel(s: *Section) void {
@@ -309,6 +512,9 @@ fn children(a: std.mem.Allocator, values: []const W) ![]W {
 }
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
+    for (s.inline_commands.items) |entry| {
+        entry.capture();
+    }
     _ = s.arena.reset(.retain_capacity);
     s.targets = .empty;
     s.group_count = 0;
@@ -365,6 +571,9 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             var title_buf: [1024]u8 = undefined;
             var desc_buf: [8192]u8 = undefined;
             const command = if (action == .custom_command) commands.get(action.custom_command) else null;
+            if (command) |value| {
+                _ = try s.inlineCommand(action.custom_command, value);
+            }
             const title = try a.dupe(u8, if (command != null and command.?.len != 0)
                 command.?
             else
@@ -375,7 +584,11 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             } else false;
             if (!matches) continue;
             const target = try (Target{ .action = action, .mode = mode, .command = command }).copy(a);
-            if (keys.isBuiltIn(action)) {
+            if (keys.isBuiltIn(action) or command != null) {
+                if (s.command_editor) |*editor| {
+                    if (editor.id != null and action == .custom_command and std.mem.eql(u8, editor.id.?, action.custom_command))
+                        try rows.append(a, try commandForm(s, cc, a, editor));
+                }
                 const assigned = slots.resolve(
                     binds,
                     defaults,
@@ -383,7 +596,13 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
                     cc.server.config.storedShortcutSlots(action),
                 );
                 try appendSlotRow(
-                    s, cc, a, &rows, title, description, target,
+                    s,
+                    cc,
+                    a,
+                    &rows,
+                    title,
+                    description,
+                    target,
                     assigned,
                     saving.canReset(effective, defaults, action) or
                         saving.canResetSlots(&cc.server.config, action),
@@ -391,8 +610,17 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
                 for (effective, labels) |bind, label| {
                     if (!slots.isOverflow(binds, action, assigned, slots.chord(bind))) continue;
                     try appendRow(
-                        s, cc, a, &rows, "", i18n.tr("Additional shortcut"),
-                        target, bind, label, false, false,
+                        s,
+                        cc,
+                        a,
+                        &rows,
+                        "",
+                        i18n.tr("Additional shortcut"),
+                        target,
+                        bind,
+                        label,
+                        false,
+                        false,
                     );
                 }
                 continue;
@@ -498,16 +726,40 @@ fn appendSlotRow(
     var controls: std.ArrayList(W) = .empty;
     var recorder: ?usize = null;
 
-    try controls.append(a, .{
-        .kind = .container,
-        .direction = .column,
-        .width = .{ .flex = 1 },
-        .gap = 3,
-        .children = try children(a, &.{
-            text(title, false),
-            text(description, true),
-        }),
-    });
+    if (action_target.action == .custom_command and action_target.command != null) {
+        const entry = try s.inlineCommand(
+            action_target.action.custom_command,
+            action_target.command.?,
+        );
+        var data = entry.data;
+        data.owner = cc;
+        const fields = try children(a, &.{
+            .{
+                .name = "shortcut_command",
+                .kind = .{ .text_input = data },
+                .width = .{ .percent = 1 },
+                .height = .{ .fixed = 36 },
+            },
+        });
+        entry.widget = &fields[0];
+        try controls.append(a, .{
+            .kind = .container,
+            .direction = .column,
+            .width = .{ .flex = 1 },
+            .children = fields,
+        });
+    } else {
+        try controls.append(a, .{
+            .kind = .container,
+            .direction = .column,
+            .width = .{ .flex = 1 },
+            .gap = 3,
+            .children = try children(a, &.{
+                text(title, false),
+                text(description, true),
+            }),
+        });
+    }
 
     for ([_]slots.Slot{ .primary, .alternate }) |slot| {
         var target = action_target;
@@ -544,12 +796,16 @@ fn appendSlotRow(
 
     const reset_id = s.targets.items.len;
     try s.targets.append(a, action_target);
-    var restore = button(
-        cc, reset_id, i18n.tr("Restore factory bindings"),
-        .refresh, resetClicked,
-    );
-    restore.name = "reset_shortcut";
-    if (!reset) restore.kind.button.state = .disabled;
+    var restore = if (action_target.action == .custom_command)
+        button(cc, reset_id, i18n.tr("Edit command"), .edit, editCommand)
+    else
+        button(cc, reset_id, i18n.tr("Restore factory bindings"), .refresh, resetClicked);
+    if (action_target.action == .custom_command) {
+        restore.name = "edit_command";
+    } else {
+        restore.name = "reset_shortcut";
+        if (!reset) restore.kind.button.state = .disabled;
+    }
     try controls.append(a, restore);
 
     try rows.append(a, .{
@@ -577,7 +833,11 @@ fn appendSlotRow(
             i18n.tr("Press keys to record. Esc cancels.");
 
         var confirm = button(
-            cc, id, i18n.tr("Save shortcut"), .checkmark, confirmClicked,
+            cc,
+            id,
+            i18n.tr("Save shortcut"),
+            .checkmark,
+            confirmClicked,
         );
         confirm.name = "save";
         confirm.kind.button.variant = .primary;
@@ -585,14 +845,22 @@ fn appendSlotRow(
             confirm.kind.button.state = .disabled;
 
         var clear = button(
-            cc, id, i18n.tr("Clear shortcut"), null, disableClicked,
+            cc,
+            id,
+            i18n.tr("Clear shortcut"),
+            null,
+            disableClicked,
         );
         clear.name = "unassign";
         if (s.targets.items[id].chord == null)
             clear.kind.button.state = .disabled;
 
         var cancel_btn = button(
-            cc, id, i18n.tr("Cancel"), .close, cancelClicked,
+            cc,
+            id,
+            i18n.tr("Cancel"),
+            .close,
+            cancelClicked,
         );
         cancel_btn.name = "cancel";
 

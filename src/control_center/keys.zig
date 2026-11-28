@@ -25,6 +25,9 @@ pub fn selectPage(cc: *ControlCenter, page: Page) void {
 
 /// Search and filtered sidebar navigation keep the query and its focus.
 pub fn selectSearchPage(cc: *ControlCenter, page: Page) void {
+    if (cc.page == .shortcuts and page != .shortcuts) {
+        cc.shortcuts.autosaveInline(cc);
+    }
     cc.shortcuts.cancel();
     // The service list is only kept live while its page is on screen.
     if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
@@ -149,6 +152,9 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
     }
     if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power or cc.page == .keys or cc.page == .shortcuts) {
         const focused = dispatcher.focused;
+        if (cc.page == .shortcuts and key == .enter) {
+            if (cc.shortcuts.commitInline(cc, focused)) return true;
+        }
         if (cc.page == .shortcuts and key == .escape and cc.shortcuts.cancelCommand()) {
             cc.refresh();
             return true;
@@ -166,6 +172,9 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
                 if (widget.kind == .select and widget.kind.select.open) {
                     _ = dispatcher.keyEvent(gpa, key, .{ .shift = shift }) catch return true;
                 }
+            }
+            if (cc.page == .shortcuts) {
+                _ = cc.shortcuts.commitInline(cc, focused);
             }
             _ = dispatcher.focusNext(&cc.root, shift);
             cc.requestWidgetRepaint();

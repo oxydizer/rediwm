@@ -217,10 +217,14 @@ pub fn overDraggable(cc: *ControlCenter, sx: f64, sy: f64) bool {
 }
 
 pub fn pointerButtonDown(cc: *ControlCenter, sx: f64, sy: f64) void {
+    const previous_focus = ui.input.current.focused;
     if (!cc.is_welcome and sx >= cc.body_children[1].computed_x) settings_search.dismiss(cc);
     cc.pointer_down = true;
     if (cc.page == .appearance and appearance_section.beginItemDrag(&cc.appearance, @floatCast(sx), @floatCast(sy))) return;
     ui.input.pointerButtonDown(&cc.root, @floatCast(sx), @floatCast(sy));
+    if (cc.page == .shortcuts and previous_focus != ui.input.current.focused) {
+        _ = cc.shortcuts.commitInline(cc, previous_focus);
+    }
     cc.requestRepaint();
 }
 

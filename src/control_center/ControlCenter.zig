@@ -90,6 +90,7 @@ nav_hover: ui.hover_glide.Glide = .{},
 background: panel_paint.Background = .{},
 /// Fires `idle_release_ms` after the last paint (`releaseIdlePixels`).
 idle_timer: ?*wl.EventSource = null,
+shortcut_autosave_timer: ?*wl.EventSource = null,
 /// Content size; x/y stay 0 (see `screenBox`).
 panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
@@ -231,6 +232,7 @@ fn createWindow(server: *Server, wlr_output: *wlr.Output, welcome: bool) !*Contr
     cc.node_data = .{ .role = .{ .control_center = cc } };
     scene_data.SceneData.attach(&cc.node_data, &buffer_node.node);
     cc.idle_timer = server.wl_server.getEventLoop().addTimer(*ControlCenter, idleTimer, cc) catch null;
+    cc.shortcut_autosave_timer = server.wl_server.getEventLoop().addTimer(*ControlCenter, shortcutAutosaveTimer, cc) catch null;
 
     server.input.open_control_center = cc;
     if (!welcome) {
@@ -244,10 +246,13 @@ fn createWindow(server: *Server, wlr_output: *wlr.Output, welcome: bool) !*Contr
 
 /// Closes the window: the content goes now, the frame animates out.
 pub fn close(cc: *ControlCenter) void {
+    cc.shortcuts.autosaveInline(cc);
     cc.destroy();
 }
 
 pub fn destroy(cc: *ControlCenter) void {
+    if (cc.shortcut_autosave_timer) |timer| timer.remove();
+    cc.shortcut_autosave_timer = null;
     cc.cancelPaste();
     if (cc.idle_timer) |timer| timer.remove();
     cc.idle_timer = null;
@@ -296,11 +301,17 @@ pub fn destroy(cc: *ControlCenter) void {
     gpa.destroy(cc);
 }
 
+fn shortcutAutosaveTimer(cc: *ControlCenter) c_int {
+    cc.shortcuts.autosaveInline(cc);
+    return 0;
+}
+
 /// The window was activated or deactivated (`Toplevel.setActivated`).
 pub fn setActivated(cc: *ControlCenter, activated: bool) void {
     if (cc.focused == activated) return;
     cc.focused = activated;
     if (!activated) {
+        cc.shortcuts.autosaveInline(cc);
         cc.cancelPaste();
         cc.shortcuts.cancelRecording();
         cc.requestWidgetRepaint();

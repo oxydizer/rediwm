@@ -65,6 +65,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     cc.search.capture();
     const shortcut_search_focus = cc.shortcuts.search_focus or ui.input.current.focused == &cc.shortcuts.search_field;
     const shortcut_command_focus = cc.shortcuts.takeCommandFocus() or ui.input.current.focused == &cc.shortcuts.command_field;
+    const shortcut_inline_focus = cc.shortcuts.focusedInlineId(ui.input.current.focused);
     cc.shortcuts.search_focus = false;
     if (cc.search.empty() != cc.search.built_empty) {
         if (cc.search.empty()) {
@@ -295,6 +296,12 @@ pub fn buildTree(cc: *ControlCenter) void {
         ui.input.current.focus(&cc.root, &cc.shortcuts.search_field);
     if (cc.showingPage(.shortcuts) and shortcut_command_focus and cc.shortcuts.command_field_visible)
         ui.input.current.focus(&cc.root, &cc.shortcuts.command_field);
+    if (cc.showingPage(.shortcuts)) {
+        if (shortcut_inline_focus) |id| {
+            if (cc.shortcuts.visibleInlineField(id)) |field|
+                ui.input.current.focus(&cc.root, field);
+        }
+    }
     if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
         if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
     }
