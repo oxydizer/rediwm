@@ -58,7 +58,6 @@ const app_terminal = @import("app_terminal.zig");
 const DeviceOp = app_model.DeviceOp;
 const MenuKind = app_model.MenuKind;
 const Sort = app_model.Sort;
-pub const SizeState = app_model.SizeState;
 const SelectionFade = app_model.SelectionFade;
 const ToolbarHover = app_model.ToolbarHover;
 pub const ViewItem = app_model.ViewItem;
@@ -234,7 +233,12 @@ pub const App = struct {
     device_op: ?DeviceOp = null,
     /// Counts navigations, so a mount can tell the view moved on while it ran.
     navigation_count: u32 = 0,
-    folder_sizes: std.StringHashMap(SizeState) = undefined,
+    /// The folder-size service to use instead of the process's (tests).
+    size_service: ?*@import("sizetree.zig").Service = null,
+    size_owner: ?@import("sizetree.zig").Owner = null,
+    size_viewport: ?app_folder_size.Viewport = null,
+    /// The service's generation when the sizes were last damaged.
+    size_generation: u64 = 0,
     dirsize_pool: ?*dirsize.Pool = null,
     /// The process's reaper: helper threads this window stops are joined
     /// there, off the UI thread. Null in tests that build an App alone.
@@ -398,7 +402,6 @@ pub const App = struct {
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
-            .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("app_kit").settings.singleClickOpen(),
             .audio_player = @import("app_kit").settings.audioPlayer(),
@@ -470,8 +473,7 @@ pub const App = struct {
         self.pins.deinit(self.allocator);
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
-        self.clearFolderSizes();
-        self.folder_sizes.deinit();
+        if (self.size_owner) |*owner| owner.deinit();
         if (self.dirsize_pool) |p| reaper_mod.retire(self.reaper, p, dirsize.Pool.deinit);
         if (self.thumbs) |t| reaper_mod.retire(self.reaper, t, thumbs_mod.Service.deinit);
         if (self.devices) |monitor| monitor.stop();
@@ -850,7 +852,13 @@ pub const App = struct {
     pub const clearFolderSizes = app_folder_size.clearFolderSizes;
     pub const hasRunningFolderSize = app_folder_size.hasRunningFolderSize;
     pub const damagePathSize = app_folder_size.damagePathSize;
+    pub const syncVisibleFolderSizes = app_folder_size.syncVisibleFolderSizes;
     pub const syncFolderSizes = app_folder_size.syncFolderSizes;
+    pub const startPropertiesSizes = app_folder_size.startPropertiesSizes;
+    pub const sizeService = app_folder_size.sizeService;
+    pub const folderSizeInfo = app_folder_size.folderSizeInfo;
+    pub const folderSizeClickable = app_folder_size.folderSizeClickable;
+    pub const revalidateFolderSizes = app_folder_size.revalidateFolderSizes;
     pub const itemSizeDisplay = app_folder_size.itemSizeDisplay;
 
     pub const ItemSizeDisplay = struct {

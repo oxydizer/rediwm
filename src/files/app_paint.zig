@@ -157,6 +157,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "app_render", self.items.items.len);
 
+    self.syncVisibleFolderSizes();
     const w_f = @as(f64, @floatFromInt(self.w));
     const h_f = @as(f64, @floatFromInt(self.h));
 

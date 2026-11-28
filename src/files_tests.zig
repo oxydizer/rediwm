@@ -315,6 +315,10 @@ test {
 }
 
 test {
+    _ = @import("files/sizetree_tests.zig");
+}
+
+test {
     _ = @import("mime_db.zig");
     _ = @import("files/chooser.zig");
     _ = @import("config").portals;

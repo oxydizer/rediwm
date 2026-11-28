@@ -6,7 +6,6 @@ const tr = i18n.tr;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
-const dirsize = @import("dirsize.zig");
 const deletion = @import("../delete_dialog.zig");
 const header = @import("header.zig");
 const IconId = @import("ui").layout.IconId;
@@ -155,14 +154,6 @@ pub const SidebarLayout = struct {
     }
 };
 
-pub const SizeState = union(enum) {
-    running: *dirsize.Job,
-    done: struct {
-        bytes: i64,
-        partial: bool,
-    },
-};
-
 pub const SelectionFade = @import("ui").hover_glide.Fade;
 
 // Titlebar timing, with a rectangle that also fits labelled toolbar buttons.
@@ -201,6 +192,7 @@ pub const ToolbarHover = struct {
 };
 
 pub const ViewItem = struct {
+    directory_key: ?@import("sizetree.zig").Key = null,
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
     transfer_stub: bool = false,

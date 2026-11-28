@@ -48,7 +48,7 @@ pub fn refresh(self: *App) void {
         return;
     }
     clearTransferBrowse(self);
-    self.clearFolderSizes();
+    self.revalidateFolderSizes();
     self.beginLoading();
     self.active_request_id = self.worker.refresh();
     self.invalidate();
@@ -224,6 +224,7 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 pub fn sync(self: *App) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "sync", self.items.items.len);
+    defer self.syncVisibleFolderSizes();
 
     if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {
@@ -320,6 +321,7 @@ pub fn applySnapshot(self: *App, snap: *worker_mod.Snapshot) void {
             }
         }
     }
+    self.revalidateFolderSizes();
     self.rebuildView();
     self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
@@ -471,13 +473,11 @@ pub fn rebuildView(self: *App) void {
             const selected = if (previous) |item| item.selected else false;
             var bytes = it.bytes;
             if (it.is_dir and !it.is_symlink) {
-                if (self.folder_sizes.get(it.path)) |sz| {
-                    switch (sz) {
-                        .done => |d| bytes = d.bytes,
-                        else => bytes = -1,
-                    }
-                } else {
-                    bytes = -1;
+                // Folders sort by what is known of their size, unknown last.
+                bytes = -1;
+                if (self.size_service orelse @import("app_folder_size.zig").sharedService()) |svc| {
+                    const info = svc.lookupIdentity(null, it.path, it.directory_key);
+                    if (info.known()) bytes = info.bytes;
                 }
             }
             self.items.append(self.allocator, .{
@@ -488,6 +488,7 @@ pub fn rebuildView(self: *App) void {
                 .is_dir = it.is_dir,
                 .is_symlink = it.is_symlink,
                 .is_broken = it.is_broken,
+                .directory_key = it.directory_key,
                 .git_status = it.git_status,
                 .git_lines = it.git_lines,
                 .missing = it.missing,

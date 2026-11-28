@@ -2721,6 +2721,10 @@ msgstr "Bon"
 msgid "Group"
 msgstr "Groupe"
 
+#: src/files/properties.zig
+msgid "On disk"
+msgstr "Sur le disque"
+
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr "Groupes"

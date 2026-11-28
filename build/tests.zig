@@ -61,6 +61,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.addImport("xkbcommon", xkbcommon);
     ui_tests_module.addImport("wlroots", wlroots);
     ui_tests_module.addImport("pixman", pixman);
+    ui_tests_module.addImport("app_kit", ctx.app_kit_mod);
     ui_tests_module.linkSystemLibrary("wayland-server", .{});
     ui_tests_module.linkSystemLibrary("xkbcommon", .{});
     ui_tests_module.linkSystemLibrary("pixman-1", .{});
@@ -71,9 +72,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.linkSystemLibrary("libinput", .{});
     ui_tests_module.linkSystemLibrary("libudev", .{});
     ui_tests_module.linkSystemLibrary("png16", .{});
+    ui_tests_module.linkSystemLibrary("libarchive", .{});
     support.addWallpaperCodec(b, ui_tests_module);
     ui_tests_module.linkSystemLibrary("libpulse", .{});
-    inline for (.{ .{ "c_pulse", ctx.c.pulse }, .{ "c_libinput", ctx.c.libinput }, .{ "c_png", ctx.c.png } }) |entry| ui_tests_module.addImport(entry[0], entry[1]);
+    inline for (.{ .{ "c_pulse", ctx.c.pulse }, .{ "c_libinput", ctx.c.libinput }, .{ "c_png", ctx.c.png }, .{ "c_archive", ctx.c.archive } }) |entry| ui_tests_module.addImport(entry[0], entry[1]);
     ui_tests_module.linkSystemLibrary("xcb", .{});
     addBass(b, ui_tests_module);
     // Fake PAM is linked only into unit tests; the compositor always uses libpam.

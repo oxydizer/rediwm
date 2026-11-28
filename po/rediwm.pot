@@ -3652,6 +3652,10 @@ msgstr ""
 msgid "Group"
 msgstr ""
 
+#: src/files/properties.zig
+msgid "On disk"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr ""

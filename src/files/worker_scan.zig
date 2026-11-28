@@ -248,6 +248,10 @@ pub fn statItem(
         .is_dir = is_dir,
         .is_symlink = is_symlink,
         .is_broken = is_broken,
+        .directory_key = if (is_dir and !is_symlink)
+            @import("sizetree.zig").Key.fromStat(&lstat_buf)
+        else
+            null,
         .bytes = size,
         .mtime = @as(i64, @intCast(lstat_buf.st_mtim.tv_sec)),
         .mode = lstat_buf.st_mode,
