@@ -255,6 +255,19 @@ pub fn canReset(binds: []const keys.Keybind, defaults: []const keys.Keybind, tar
     return false;
 }
 
+/// A reset can be necessary even when every effective chord is already
+/// correct: explicit slot positions must also return to factory order.
+pub fn canResetSlots(cfg: *const loader.Config, target: ?keys.Action) bool {
+    const table = if (cfg.compositor.desktop_mode.tiled())
+        cfg.workspace_shortcut_slots
+    else
+        cfg.shortcut_slots;
+    for (table.entries.items) |entry| {
+        if (selected(entry.action, target)) return true;
+    }
+    return false;
+}
+
 fn resetChanges(a: std.mem.Allocator, binds: []const keys.Keybind, defaults: []const keys.Keybind, target: ?keys.Action) ![]const keys.Keybind {
     var changes: std.ArrayList(keys.Keybind) = .empty;
     // Reserve the factory chords before dropping obsolete bindings. Occupants
@@ -446,12 +459,48 @@ pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []con
 }
 
 pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, mode: loader.DesktopMode, target: ?keys.Action) !void {
+    if (path.len == 0) return error.NoConfigPath;
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
-    var defaults = try factoryConfig(a, mode);
+    const scratch = arena.allocator();
+
+    const original = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, scratch, .limited(1 << 20),
+    );
+    var old = try loader.parse(scratch, original, path);
+    defer old.deinit();
+    old.compositor.desktop_mode = mode;
+    if (!sameBindings(old.activeKeybinds(), binds))
+        return error.ConfigChanged;
+
+    var defaults = try factoryConfig(scratch, mode);
     defer defaults.deinit();
-    const changes = try resetChanges(arena.allocator(), binds, defaults.activeKeybinds(), target);
-    if (changes.len > 0) try saveChanges(a, io, path, binds, changes, mode, null);
+    const changes = try resetChanges(
+        scratch, old.activeKeybinds(), defaults.activeKeybinds(), target,
+    );
+
+    var result = if (changes.len > 0)
+        try patchBindings(
+            scratch, original, old.activeKeybinds(), changes, mode,
+        )
+    else
+        original;
+
+    const table = if (mode.tiled())
+        old.workspace_shortcut_slots
+    else
+        old.shortcut_slots;
+    var removed_metadata = false;
+    for (table.entries.items) |entry| {
+        if (!selected(entry.action, target)) continue;
+        result = try slots.patch(
+            scratch, result, entry.action, null, mode.tiled(),
+        );
+        removed_metadata = true;
+    }
+
+    if (changes.len == 0 and !removed_metadata) return;
+    try writeConfig(scratch, io, path, result);
 }
 
 fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, changes: []const keys.Keybind, mode: loader.DesktopMode, command: ?CommandSnapshot) !void {
@@ -531,6 +580,178 @@ fn writeConfig(a: std.mem.Allocator, io: std.Io, path: []const u8, result: []con
     try file.writeStreamingAll(io, result);
     try file.sync(io);
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
+}
+
+test "reset restores factory slot order without binding changes" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[shortcut_slots]
+        \\"close_window" = ["", "Super+q"]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+    before.compositor.desktop_mode = .canvas;
+
+    var defaults = try factoryConfig(a, .canvas);
+    defer defaults.deinit();
+    try std.testing.expect(!canReset(
+        before.activeKeybinds(), defaults.activeKeybinds(), .close_window,
+    ));
+    try std.testing.expect(canResetSlots(&before, .close_window));
+
+    try saveReset(a, io, path, before.activeKeybinds(), .canvas, .close_window);
+
+    const saved = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(saved);
+    var after = try loader.parse(a, saved, path);
+    defer after.deinit();
+    after.compositor.desktop_mode = .canvas;
+
+    try std.testing.expect(after.storedShortcutSlots(.close_window) == null);
+    try std.testing.expect(sameBindings(before.keybinds, after.keybinds));
+    try std.testing.expect(!canResetSlots(&after, .close_window));
+    const restored = slots.resolve(
+        after.activeKeybinds(), defaults.activeKeybinds(), .close_window, null,
+    );
+    const primary = try keys.parseKeybind("Super+q");
+    try std.testing.expectEqual(
+        keys.pack(primary.modifiers, primary.sym), restored.primary.?,
+    );
+}
+
+test "individual and global resets preserve custom and inactive mode slots" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Super+F12" = "close_window"
+        \\"Super+f" = "toggle_fullscreen"
+        \\"Ctrl+F12" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo hello"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+F12", ""]
+        \\"toggle_fullscreen" = ["", "Super+f"]
+        \\"custom_command demo" = ["Ctrl+F12", ""]
+        \\[shortcut_slots.workspace]
+        \\"close_window" = ["", "Super+c"]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+    before.compositor.desktop_mode = .canvas;
+
+    const custom: keys.Action = .{ .custom_command = "demo" };
+    try saveReset(a, io, path, before.activeKeybinds(), .canvas, .close_window);
+
+    const saved = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(saved);
+    var individual = try loader.parse(a, saved, path);
+    defer individual.deinit();
+    individual.compositor.desktop_mode = .canvas;
+
+    try std.testing.expect(individual.shortcut_slots.get(.close_window) == null);
+    try std.testing.expect(individual.shortcut_slots.get(.toggle_fullscreen) != null);
+    try std.testing.expect(individual.shortcut_slots.get(custom) != null);
+    try std.testing.expect(individual.workspace_shortcut_slots.get(.close_window).?.eql(
+        before.workspace_shortcut_slots.get(.close_window).?,
+    ));
+
+    const primary = try keys.parseKeybind("Super+q");
+    try std.testing.expectEqual(
+        keys.Action.close_window,
+        individual.lookupKeybind(primary.modifiers, primary.sym).?,
+    );
+
+    try saveReset(a, io, path, individual.activeKeybinds(), .canvas, null);
+
+    const reset = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(reset);
+    var after = try loader.parse(a, reset, path);
+    defer after.deinit();
+    after.compositor.desktop_mode = .canvas;
+
+    try std.testing.expect(after.shortcut_slots.get(.close_window) == null);
+    try std.testing.expect(after.shortcut_slots.get(.toggle_fullscreen) == null);
+    try std.testing.expect(after.shortcut_slots.get(custom).?.eql(
+        before.shortcut_slots.get(custom).?,
+    ));
+    try std.testing.expect(after.workspace_shortcut_slots.get(.close_window).?.eql(
+        before.workspace_shortcut_slots.get(.close_window).?,
+    ));
+    try std.testing.expect(sameBindings(
+        before.workspace_keybinds, after.workspace_keybinds,
+    ));
+    try std.testing.expectEqualStrings(
+        "echo hello", after.shortcut_commands.get("demo").?,
+    );
+    const custom_key = try keys.parseKeybind("Ctrl+F12");
+    try std.testing.expect(keys.actionEql(
+        custom, after.lookupKeybind(custom_key.modifiers, custom_key.sym).?,
+    ));
+}
+
+test "reset conflict leaves bindings and slot metadata untouched" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "custom_command demo"
+        \\"Super+F12" = "close_window"
+        \\[shortcut_commands]
+        \\demo = "echo hello"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+F12", ""]
+        \\"custom_command demo" = ["Super+q", ""]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+    before.compositor.desktop_mode = .canvas;
+
+    for ([_]?keys.Action{ .close_window, null }) |target| {
+        try std.testing.expectError(
+            error.ShortcutConflict,
+            saveReset(a, io, path, before.activeKeybinds(), .canvas, target),
+        );
+        const actual = try std.Io.Dir.cwd().readFileAlloc(
+            io, path, a, .limited(1 << 20),
+        );
+        defer a.free(actual);
+        try std.testing.expectEqualStrings(original, actual);
+    }
 }
 
 test "saveSlot persists independent primary and alternate slots" {
