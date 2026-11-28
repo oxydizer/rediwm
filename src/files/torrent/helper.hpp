@@ -36,7 +36,6 @@ namespace helper {
 
 inline constexpr size_t max_packet = 192 * 1024;
 inline constexpr size_t max_files = 512, max_torrents = 64;
-inline constexpr char item_iface[] = "org.kde.StatusNotifierItem";
 struct Transfer {
   lt::torrent_handle handle;
   std::string id, source, destination, error, publication;
@@ -47,6 +46,9 @@ struct Transfer {
   int ratio = 1, limit = 1024 * 1024;
   lt::torrent_status cached;
   std::shared_ptr<lt::torrent_info const> cached_info;
+  /// Per-file bytes and priorities, kept while the engine sleeps.
+  std::vector<int64_t> cached_progress;
+  std::vector<lt::download_priority_t> cached_priorities;
   lt::torrent_status status() const {
     return handle.is_valid() ? handle.status() : cached;
   }
@@ -62,11 +64,9 @@ inline std::map<std::string, Transfer> transfers;
 inline std::map<int, Peer> peers;
 inline std::unique_ptr<lt::session> session;
 inline GDBusConnection *bus;
-inline std::string state_dir, executable;
+inline std::string state_dir;
 inline std::map<std::string, unsigned> saves;
-inline bool use_scopes = false, tray_upload = false;
-inline std::string tray_status = "Passive";
-inline std::string tray_title = "Transfers";
+inline bool use_scopes = false;
 
 // helper.cpp
 void create_engine();
@@ -79,17 +79,24 @@ void finish_configuration(Transfer &t);
 void atomic_write(std::string const &path, std::string const &data);
 void persist(Transfer &t);
 void validate(lt::torrent_info const &info);
-void command(JsonObject *o);
+/// Runs one request. A non-empty result is a reply for the requester alone
+/// (and nothing changed, so nothing is published).
+std::string command(JsonObject *o);
 void publish_storage(Transfer &t);
 void restore();
 
 // helper_peers.cpp
 std::string snapshot();
+/// The `inspect` reply for a torrent file that is not a transfer (yet).
+std::string inspection(lt::torrent_info const &info, std::string const &id,
+                       std::string const &source);
+/// The `detail` reply: every file of a transfer, with what is wanted and done.
+std::string detail(Transfer &t);
 gboolean accept_peer(gint fd, GIOCondition, gpointer);
 void publish();
 
-// helper_tray.cpp
+// helper_session.cpp
 void place_scope(pid_t pid, char const *app);
-void init_tray();
+GDBusConnection *session_bus();
 
 } // namespace helper

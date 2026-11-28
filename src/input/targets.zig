@@ -134,7 +134,7 @@ pub fn directInputReachesClients(input: *Input) bool {
     if (input.desktop_grab or input.seat.drag != null or input.active_buttons > 0) return false;
     if (input.window_menu.node != null) return false;
     if (server.tray) |tray| if (tray.menu_item != 0) return false;
-    if (input.open_start_menu != null or input.open_power_menu != null or input.open_wifi != null or input.open_battery != null or input.open_calendar != null) return false;
+    if (input.open_start_menu != null or input.open_power_menu != null or input.open_wifi != null or input.open_transfers != null or input.open_battery != null or input.open_calendar != null) return false;
     // Alt+drag moves and Super pans are pointer gestures.
     if (input.isSuperHeld() or input.isAltHeld()) return false;
     return true;

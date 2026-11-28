@@ -161,7 +161,7 @@ pub const source =
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "~right:transfers", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
     \\# exists, or a cable is connected, and ~right:input_source while there is more than
     \\# one keyboard layout or input method; a plain or - entry always shows or hides it.
@@ -186,6 +186,7 @@ pub const source =
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
     \\files_audio_player    = true # Files: play audio files in the built-in player, with a play button on each row
+    \\files_folders_first   = true # Files: folders before files, unless changed for a folder in Files
     \\switcher_style        = "linear" # linear or circular; circular stacks windows from the same app
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
     \\switcher_circle_bg    = false # circular style only: paint a disc behind it, using window chrome's opacity/darkness

@@ -144,13 +144,18 @@ The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
 For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray",
-"right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source",
+"~right:transfers", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source",
 "right:volume", "right:clock", "-right:power"]` is the default. The keyboard layout item
 (`input_source`) is described under "Keyboard layouts and input methods"; older
 lists gain it before Volume, automatic. The desktop mode item (`desktop_mode`)
 switches between the last stacking and tiled modes like Super+Shift+W and shows the current
 mode; it is off by default, and older lists gain it hidden before the keyboard
-layout.
+layout. Transfers (`transfers`) is automatic: it shows while Files copies, moves,
+extracts or deletes, and while finished ones wait to be cleared; older lists gain
+it before the battery. Its ring fills with their combined progress, and turns to
+pause bars when all are paused. Its panel pauses, resumes and cancels each one
+(cancelling takes a second press), sends a conflict to Files to answer, and
+opens where a transfer went.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
 machine has a wireless adapter, and Ethernet only while a cable is connected;
 Wi-Fi opens the network menu, Ethernet opens Settings → Network. Turning an item

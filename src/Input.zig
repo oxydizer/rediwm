@@ -30,6 +30,7 @@ const Touch = @import("input/touch.zig");
 const Tablet = @import("input/tablet.zig");
 const Lid = @import("input/lid.zig");
 const DragDodge = @import("input/drag_dodge.zig");
+const DragTabHover = @import("input/drag_tab_hover.zig");
 const cursor_theme = @import("cursor_theme.zig");
 const gpa = @import("main.zig").gpa;
 const input_targets = @import("input/targets.zig");
@@ -140,6 +141,8 @@ pointer_warp: PointerWarp = undefined,
 shortcuts_inhibit: ShortcutsInhibit = undefined,
 /// A file manager slides aside while a file is dragged out of it.
 drag_dodge: DragDodge = undefined,
+/// A drag resting on a titlebar tab switches to that tab.
+drag_tab_hover: DragTabHover = undefined,
 /// Touchscreens: wl_touch, or pointer emulation.
 touch: Touch = undefined,
 /// Drawing tablets: tablet-v2, or pointer emulation.
@@ -174,6 +177,7 @@ window_menu: @import("taskbar/window_menu.zig").Menu = .{},
 open_calendar: ?*@import("calendar.zig").Calendar = null,
 open_battery: ?*@import("battery_popup.zig").Popup = null,
 open_wifi: ?*@import("network/popup.zig").Popup = null,
+open_transfers: ?*@import("transfers/popup.zig").Popup = null,
 screenshot_buttons: u32 = 0,
 polkit_buttons: u32 = 0,
 // The one open power menu, if any — gates keyboard grab and click-outside
@@ -408,6 +412,8 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     errdefer input.shortcuts_inhibit.deinit();
     input.drag_dodge.init(input);
     errdefer input.drag_dodge.deinit();
+    input.drag_tab_hover.init(input);
+    errdefer input.drag_tab_hover.deinit();
     input.touch.init(input);
     errdefer input.touch.deinit();
     input.tablet.init(input);
@@ -451,6 +457,7 @@ pub fn deinit(input: *Input) void {
     input.pointer_warp.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
+    input.drag_tab_hover.deinit();
     input.trash_drop.deinit();
     input.lid.deinit();
     input.tablet.deinit();
@@ -558,6 +565,7 @@ pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
+    input.drag_tab_hover.detach(toplevel);
     if (input.grabbed_toplevel == toplevel) input.clearGrab();
     if (input.resize_session) |session| {
         if (session.includes(toplevel)) input.cancelResize();

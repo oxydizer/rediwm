@@ -30,12 +30,6 @@ pub const ZigTests = struct {
 /// (tests/*.py) with their `test-*` steps.
 pub fn addZig(ctx: Context, session: Session) ZigTests {
     const b = ctx.b;
-    const run_files_benchmarks = if (b.graph.environ_map.get(
-        "REDIWM_RUN_BENCHMARKS",
-    )) |value|
-        std.mem.eql(u8, value, "1")
-    else
-        false;
     const target = ctx.target;
     const optimize = ctx.optimize;
     const use_llvm = ctx.use_llvm;
@@ -67,6 +61,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.addImport("xkbcommon", xkbcommon);
     ui_tests_module.addImport("wlroots", wlroots);
     ui_tests_module.addImport("pixman", pixman);
+    ui_tests_module.addImport("app_kit", ctx.app_kit_mod);
     ui_tests_module.linkSystemLibrary("wayland-server", .{});
     ui_tests_module.linkSystemLibrary("xkbcommon", .{});
     ui_tests_module.linkSystemLibrary("pixman-1", .{});
@@ -77,9 +72,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.linkSystemLibrary("libinput", .{});
     ui_tests_module.linkSystemLibrary("libudev", .{});
     ui_tests_module.linkSystemLibrary("png16", .{});
+    ui_tests_module.linkSystemLibrary("libarchive", .{});
     support.addWallpaperCodec(b, ui_tests_module);
     ui_tests_module.linkSystemLibrary("libpulse", .{});
-    inline for (.{ .{ "c_pulse", ctx.c.pulse }, .{ "c_libinput", ctx.c.libinput }, .{ "c_png", ctx.c.png } }) |entry| ui_tests_module.addImport(entry[0], entry[1]);
+    inline for (.{ .{ "c_pulse", ctx.c.pulse }, .{ "c_libinput", ctx.c.libinput }, .{ "c_png", ctx.c.png }, .{ "c_archive", ctx.c.archive } }) |entry| ui_tests_module.addImport(entry[0], entry[1]);
     ui_tests_module.linkSystemLibrary("xcb", .{});
     addBass(b, ui_tests_module);
     // Fake PAM is linked only into unit tests; the compositor always uses libpam.
@@ -157,6 +153,15 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_network_tests = b.addRunArtifact(network_tests);
     test_step.dependOn(&run_network_tests.step);
     b.step("test-network", "Test NetworkManager address and profile parsing").dependOn(&run_network_tests.step);
+    // The Transfers panel's job model, fed endpoint lines without a compositor.
+    const transfers_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/transfers/model.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    const run_transfers_tests = b.addRunArtifact(transfers_tests);
+    test_step.dependOn(&run_transfers_tests.step);
+    b.step("test-transfers", "Test the Transfers panel's job model").dependOn(&run_transfers_tests.step);
     const printers_integration = b.addSystemCommand(&.{"python3"});
     printers_integration.addFileArg(b.path("tests/printers.py"));
     printers_integration.step.dependOn(b.getInstallStep());
@@ -337,6 +342,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_lifecycle_tests = b.addRunArtifact(lifecycle_tests);
     b.step("test-lifecycle", "Check callback ownership under allocation failure").dependOn(&run_lifecycle_tests.step);
     test_step.dependOn(&run_ui_tests.step);
+    const panel_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{"transfers panel"} });
+    b.step("test-transfers-panel", "Paint the Transfers panel and icon off screen").dependOn(&b.addRunArtifact(panel_tests).step);
     const lock_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{ "lock ", "greeter " } });
     const run_lock_tests = b.addRunArtifact(lock_tests);
     const lock_step = b.step("test-lock", "Test lock isolation, password editing, rendering, PAM outcomes and the rediwm-dm greeter");
@@ -385,53 +392,40 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     // Keep performance measurements out of the normal test suite. Reuse the
     // Files test module and its dependencies, but compile only the benchmark
     // test selected by its name.
-    const transfer_bench_tests = b.addTest(.{
+    const archive_bench_tests = b.addTest(.{
         .root_module = files_tests.root_module,
-        .filters = &.{"transfer benchmark"},
+        .filters = &.{"archive directory fd benchmark"},
     });
-    const run_transfer_bench = b.addRunArtifact(transfer_bench_tests);
+    const run_archive_bench = b.addRunArtifact(archive_bench_tests);
     b.step(
-        "bench-files-transfers",
-        "Benchmark transfer progress, tree aggregation and concurrent job polling",
-    ).dependOn(&run_transfer_bench.step);
+        "bench-files-archive",
+        "Benchmark archive extraction directory traversal",
+    ).dependOn(&run_archive_bench.step);
 
-    // Standalone executable for end-to-end measurements of the production
-    // JobRunner filesystem copy path.
-    const copy_bench_module = b.createModule(.{
-        .root_source_file = b.path("src/files/copy_bench.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+    // S5's responsiveness check: the production service under heavy I/O,
+    // with this test's thread as three windows' event loop.
+    const io_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"files io responsiveness benchmark"},
     });
-    copy_bench_module.addImport("platform", ctx.platform_mod);
-    copy_bench_module.addImport("i18n", ctx.i18n_mod);
-    copy_bench_module.addImport("c", ctx.c.libc);
-    copy_bench_module.addImport("c_gfx", ctx.c.gfx);
-    copy_bench_module.addImport("c_archive", ctx.c.archive);
-    copy_bench_module.linkSystemLibrary("libarchive", .{});
+    const run_io_bench = b.addRunArtifact(io_bench_tests);
+    run_io_bench.has_side_effects = true;
+    b.step(
+        "bench-files-io",
+        "Measure UI-thread cost of the Files I/O service under heavy I/O (REDIWM_RUN_BENCHMARKS=1)",
+    ).dependOn(&run_io_bench.step);
 
-    const copy_bench_exe = b.addExecutable(.{
-        .name = "rediwm-copy-bench",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/files/copy_bench_main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
+    // The copy path alone (io_copy.execute), without the service.
+    const copy_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"files copy path benchmark"},
     });
-    copy_bench_exe.root_module.addImport("copy_bench", copy_bench_module);
-    const run_copy_bench = b.addRunArtifact(copy_bench_exe);
+    const run_copy_bench = b.addRunArtifact(copy_bench_tests);
     run_copy_bench.has_side_effects = true;
     b.step(
         "bench-files-copy",
-        "Run the standalone production filesystem copy benchmark",
+        "Measure the Files copy path per file set and strategy (REDIWM_RUN_BENCHMARKS=1)",
     ).dependOn(&run_copy_bench.step);
-
-    if (run_files_benchmarks) {
-        test_step.dependOn(&run_copy_bench.step);
-    }
 
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));

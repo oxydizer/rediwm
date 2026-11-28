@@ -5,12 +5,68 @@ const app_mod = @import("files/app.zig");
 const ops_mod = @import("files/ops.zig");
 const clipboard_mod = @import("files/clipboard.zig");
 const dirsize_mod = @import("files/dirsize.zig");
-const transfer_bench_mod = @import("files/transfer_bench.zig");
+const io_manager_tests = @import("files/io_manager_tests.zig");
+const io_service_tests = @import("files/io_service_tests.zig");
+const io_thread_guard = @import("files/io_thread_guard.zig");
+const io_job_table = @import("files/io_job_table.zig");
+const io_window_link = @import("files/io_window_link.zig");
+const io_manager_summary_tests = @import("files/io_manager_summary_tests.zig");
+const io_staging_cleanup_tests = @import("files/io_staging_cleanup_tests.zig");
+const io_coordinator_tests = @import("files/io_coordinator_tests.zig");
+const io_coordinator_transfer_tests = @import("files/io_coordinator_transfer_tests.zig");
+const io_coordinator_shutdown_tests = @import("files/io_coordinator_shutdown_tests.zig");
+const io_deletion_tests = @import("files/io_deletion_tests.zig");
+const io_request_tests = @import("files/io_request_tests.zig");
+const io_job_view_tests = @import("files/io_job_view_tests.zig");
+const io_endpoint_tests = @import("files/io_endpoint_tests.zig");
+const io_copy_bench_tests = @import("files/io_copy_bench_tests.zig");
+const io_endpoint_subscribe_tests = @import("files/io_endpoint_subscribe_tests.zig");
+const io_torrent_bridge = @import("files/io_torrent_bridge.zig");
+const torrent_tree = @import("files/torrent_tree.zig");
+const io_workers_tests = @import("files/io_workers_tests.zig");
+const io_executor_tests = @import("files/io_executor_tests.zig");
+const io_copy_tests = @import("files/io_copy_tests.zig");
+const io_copy_existing = @import("files/io_copy_existing.zig");
+const io_directory_tests = @import("files/io_directory_tests.zig");
+const io_finalize_tests = @import("files/io_finalize_tests.zig");
+const io_symlink_tests = @import("files/io_symlink_tests.zig");
+const io_operation_executor_tests = @import("files/io_operation_executor_tests.zig");
+const io_discovery_tests = @import("files/io_discovery_tests.zig");
+const io_discovery_executor_tests = @import("files/io_discovery_executor_tests.zig");
+const io_tree_tests = @import("files/io_tree.zig");
 const c = @import("files/c.zig").api;
 const linux = std.os.linux;
 
 test {
-    _ = transfer_bench_mod;
+    _ = io_manager_tests;
+    _ = io_service_tests;
+    _ = io_thread_guard;
+    _ = io_job_table;
+    _ = io_window_link;
+    _ = io_manager_summary_tests;
+    _ = io_staging_cleanup_tests;
+    _ = io_coordinator_tests;
+    _ = io_coordinator_transfer_tests;
+    _ = io_coordinator_shutdown_tests;
+    _ = io_deletion_tests;
+    _ = io_request_tests;
+    _ = io_job_view_tests;
+    _ = io_endpoint_tests;
+    _ = io_copy_bench_tests;
+    _ = io_endpoint_subscribe_tests;
+    _ = io_torrent_bridge;
+    _ = torrent_tree;
+    _ = io_workers_tests;
+    _ = io_executor_tests;
+    _ = io_copy_tests;
+    _ = io_copy_existing;
+    _ = io_directory_tests;
+    _ = io_finalize_tests;
+    _ = io_symlink_tests;
+    _ = io_operation_executor_tests;
+    _ = io_discovery_tests;
+    _ = io_discovery_executor_tests;
+    _ = io_tree_tests;
 }
 
 test "History navigation stack" {
@@ -259,11 +315,17 @@ test {
 }
 
 test {
+    _ = @import("files/sizetree_tests.zig");
+}
+
+test {
     _ = @import("mime_db.zig");
     _ = @import("files/chooser.zig");
     _ = @import("config").portals;
     _ = @import("files/thumb_decode.zig");
     _ = @import("files/thumbs.zig");
+    _ = @import("files/reaper.zig");
+    _ = @import("files/io_bench_tests.zig");
     _ = @import("files/volumes.zig");
     _ = @import("files/pins.zig");
     _ = @import("files/trash_tests.zig");

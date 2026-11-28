@@ -1,5 +1,6 @@
 //! Files terminal controller. All terminal state stays in this client process.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -109,6 +110,8 @@ pub fn overTerminalDivider(self: *App, x: f64, y: f64) bool {
     return if (self.terminalDivider()) |divider| divider.contains(x, y) else false;
 }
 
+/// The terminal follows the folder shown. The service resolves it; the
+/// reply applies only if the view has not moved on meanwhile.
 fn rememberDirectory(self: *App) void {
     if (self.terminal.navigation == self.navigation_count) return;
     self.terminal.navigation = self.navigation_count;
@@ -117,18 +120,7 @@ fn rememberDirectory(self: *App) void {
         const current = self.history.current;
         if (std.mem.eql(u8, current, trash) or (std.mem.startsWith(u8, current, trash) and current.len > trash.len and current[trash.len] == '/')) return;
     }
-    const path_z = self.allocator.dupeSentinel(u8, self.history.current, 0) catch return;
-    defer self.allocator.free(path_z);
-    var path_buf: [4096]u8 = undefined;
-    const real = c.realpath(path_z, &path_buf) orelse return;
-    var stat: c.struct_stat = undefined;
-    if (c.stat(real, &stat) != 0 or stat.st_mode & c.S_IFMT != c.S_IFDIR) return;
-    const resolved = std.mem.span(real);
-    if (self.terminal.directory) |old| if (std.mem.eql(u8, old, resolved)) return;
-    const owned = self.allocator.dupeSentinel(u8, resolved, 0) catch return;
-    if (self.terminal.directory) |old| self.allocator.free(old);
-    self.terminal.directory = owned;
-    if (self.terminal.session) |session| _ = tc.ft_follow(session, owned);
+    _ = @import("app_requests.zig").send(self, .{ .canonical = .{ .paths = &.{self.history.current} } }, .{ .terminal_directory = .{ .navigation = self.navigation_count } });
 }
 
 /// Client processes necessarily have WAYLAND_DISPLAY. Only a native login

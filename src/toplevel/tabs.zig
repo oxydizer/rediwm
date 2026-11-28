@@ -14,9 +14,22 @@ pub fn hasTabStrip(toplevel: *const Toplevel) bool {
 
 /// `storage` may be null for a window without a strip, which has no tabs.
 pub fn tabStrip(toplevel: *Toplevel, storage: ?*[@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) @import("../chrome_tabs.zig").Strip {
-    var strip: @import("../chrome_tabs.zig").Strip = .{ .first = toplevel.tab_first, .hover = toplevel.tab_hover, .notice = toplevel.tab_notice, .drag = toplevel.tab_drag, .drop_index = toplevel.tab_drop };
-    const selected = if (storage) |tabs| fillTabs(toplevel, tabs, &strip) else 0;
-    const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    const metrics = toplevel.chromeMetrics();
+    var strip: @import("../chrome_tabs.zig").Strip = .{
+        .layout = metrics.layout,
+        .inset_left = if (metrics.layout == .files_tabs) toplevel.controlInsets().left else 0,
+        .first = toplevel.tab_first,
+        .hover = toplevel.tab_hover,
+        .notice = toplevel.tab_notice,
+        .drag = toplevel.tab_drag,
+        .drop_index = toplevel.tab_drop,
+    };
+    const tabs = storage orelse {
+        toplevel.tab_first = 0;
+        return strip;
+    };
+    const selected = fillTabs(toplevel, tabs, &strip);
+    const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width - toplevel.controlInsets().right, metrics.density, strip);
     if (selected < strip.first) strip.first = selected;
     if (selected >= strip.first + geom.count) strip.first = selected + 1 -| geom.count;
     toplevel.tab_first = strip.first;
@@ -81,7 +94,7 @@ pub fn tabPress(toplevel: *Toplevel, sx: f64, sy: f64, lx: f64) bool {
     };
     var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
     const strip = toplevel.tabStrip(&storage);
-    const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    const g = chrome_tabs.geometry(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), strip);
     return toplevel.tab_drag.press(strip, g, id, @floatCast(lx));
 }
 
@@ -118,7 +131,7 @@ pub fn tabRelease(toplevel: *Toplevel) void {
     if (toplevel.titlebar_tabs) |published| if (published.active() and published.has(id)) {
         var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
         const strip = toplevel.tabStrip(&storage);
-        const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+        const g = chrome_tabs.geometry(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), strip);
         if (toplevel.tab_drag.release(g)) |move| {
             published.sendMove(move.id, move.index);
         } else if (!dragged) published.sendSelect(id);
@@ -134,7 +147,7 @@ pub fn activateLeading(toplevel: *Toplevel) void {
     const published = toplevel.titlebar_tabs orelse return;
     var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
     const strip = toplevel.tabStrip(&storage);
-    const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    const g = chrome_tabs.geometry(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), strip);
     const r = g.leading orelse return;
     published.sendLeadingActivated(r.x, r.y, r.w, r.h, toplevel.borderWidth(), toplevel.titlebarHeight());
 }
@@ -150,7 +163,7 @@ pub fn tabDropIndex(toplevel: *Toplevel, sx: f64) ?usize {
     if (!published.active()) return null;
     var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
     const strip = toplevel.tabStrip(&storage);
-    const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    const g = chrome_tabs.geometry(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), strip);
     return @import("ui").widgets.title_tabs.dropIndex(g, @floatCast(sx));
 }
 

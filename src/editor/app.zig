@@ -28,6 +28,7 @@ const app_drafts = @import("app_drafts.zig");
 const app_move = @import("app_move.zig");
 const app_recent = @import("app_recent.zig");
 const drafts = @import("drafts.zig");
+const editor_preferences = @import("preferences.zig");
 const a = std.heap.c_allocator;
 pub const top: f64 = 40;
 pub const status_h: f64 = 26;
@@ -43,8 +44,8 @@ const Status = struct {
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
 pub const far: c_int = 1_000_000 * 1024;
-pub const Action = enum { new, new_window, open, open_recent, save, save_as, find, replace, wrap };
-pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("New Window"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+pub const Action = enum { new, new_window, open, open_recent, save, save_as, find, replace, wrap, line_numbers };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("New Window"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap"), i18n.msg("Line Numbers") };
 /// The menu row whose submenu lists the recent files.
 pub const recent_row = @intFromEnum(Action.open_recent);
 pub const Tab = struct {
@@ -132,6 +133,9 @@ pub const App = struct {
     px: f64 = -1,
     py: f64 = -1,
     wrap: bool = true,
+    line_numbers: bool = false,
+    line_count_revision: usize = std.math.maxInt(usize),
+    line_count: usize = 1,
     io: std.Io,
     operation: ?*op.Operation = null,
     queue: std.ArrayList([:0]u8) = .empty,
@@ -159,6 +163,19 @@ pub const App = struct {
         var self: App = .{ .io = io };
         try self.newTab();
         return self;
+    }
+    pub fn loadPreferences(self: *App) void {
+        const file = editor_preferences.Preferences.path(a, self.environ) catch return;
+        defer a.free(file);
+        self.line_numbers = editor_preferences.Preferences.load(a, self.io, file).line_numbers;
+    }
+    pub fn savePreferences(self: *App) void {
+        const file = editor_preferences.Preferences.path(a, self.environ) catch return;
+        defer a.free(file);
+        const preferences: editor_preferences.Preferences = .{
+            .line_numbers = self.line_numbers,
+        };
+        preferences.save(a, self.io, file) catch {};
     }
     pub fn deinit(self: *App) void {
         self.deinitDrafts();
@@ -248,6 +265,7 @@ pub const App = struct {
     pub const proximityChanged = app_controls.proximityChanged;
     pub const render = app_paint.render;
     pub const paintLine = app_paint.paintLine;
+    pub const paintLineNumber = app_paint.paintLineNumber;
     pub const paintClose = app_paint.paintClose;
     pub fn getTitle(self: *App) [*:0]const u8 {
         return &self.title;
@@ -287,10 +305,12 @@ pub const App = struct {
     pub const resize = app_view.resize;
     pub const viewTop = app_view.viewTop;
     pub const topInset = app_view.topInset;
+    pub const editorLayout = app_search.editorLayout;
     pub const openMenuAt = app_paint.openMenuAt;
     pub const viewHeight = app_view.viewHeight;
     pub const cancelDrag = app_view.cancelDrag;
     pub const cursorName = app_view.cursorName;
+    pub const textOriginX = app_view.textOriginX;
     pub const scrollbarGeometry = app_view.scrollbarGeometry;
     pub const scrollOffset = app_view.scrollOffset;
     pub const seekScroll = app_view.seekScroll;

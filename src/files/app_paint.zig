@@ -36,15 +36,11 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     c.cairo_fill(cr);
     setSource(cr, ui_theme.global.app_divider);
     c.cairo_set_line_width(cr, 1);
-    c.cairo_move_to(cr, 0, 54.5);
-    c.cairo_line_to(cr, width, 54.5);
+    c.cairo_move_to(cr, 0, header.nav_height - 0.5);
+    c.cairo_line_to(cr, width, header.nav_height - 0.5);
     c.cairo_move_to(cr, 0, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_line_to(cr, width, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_stroke(cr);
-    if (self.transfer_view.active) {
-        self.renderTransferToolbar(cr);
-        return;
-    }
     const in_repo = self.inRepository();
     for ([_]bool{ false, true }) |content| {
         if (content) self.renderToolbarHover(cr);
@@ -54,7 +50,7 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
             const enabled = self.toolbarButtonEnabled(action);
             const active = (action == .grid and !self.list_view) or (action == .list and self.list_view) or
                 (action == .filter and (self.folders_only or self.show_hidden or self.changedOnly())) or (action == .search and self.search_visible);
-            const opts: ui_button.Options = switch (action) {
+            var opts: ui_button.Options = switch (action) {
                 .new => .{ .leading_icon = .plus, .label = tr("New") },
                 .sort => .{ .leading_icon = .sort, .label = switch (self.effectiveSort()) {
                     .name, .name_desc => tr("Name"),
@@ -63,8 +59,15 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                     .type, .type_desc => tr("Type"),
                 } },
                 .filter => .{ .leading_icon = .filter, .label = tr("Filter") },
-                else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 0.56, .label = @tagName(action) },
+                else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 16.0 / 28.0, .label = @tagName(action) },
             };
+            if (opts.leading_icon != null) {
+                opts.size = .sm;
+                opts.font_size = 12;
+                opts.icon_gap = 6;
+                opts.alignment = .left;
+                opts.horizontal_padding = 10;
+            }
             var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse continue;
             const proximity = self.toolbarButtonProximity(action, self.mouse_x, self.mouse_y);
             const reach = ui_theme.global.border_glow_reach;
@@ -81,7 +84,11 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                 .proximity_y = proximity.y,
                 .hover_elevation = elevation,
             };
-            if (content) ui_button.paintContent(&layer.renderer, layer.local(), opts, state) else ui_button.paintBackground(&layer.renderer, layer.local(), opts, state);
+            const box = layer.local();
+            if (content) {
+                const inset: f32 = if (opts.leading_icon != null) 4 else 0;
+                ui_button.paintContent(&layer.renderer, .{ .x = box.x, .y = box.y + inset, .w = box.w, .h = box.h - 2 * inset }, opts, state);
+            } else ui_button.paintBackground(&layer.renderer, box, opts, state);
             layer.finish();
         }
     }
@@ -150,6 +157,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "app_render", self.items.items.len);
 
+    self.syncVisibleFolderSizes();
     const w_f = @as(f64, @floatFromInt(self.w));
     const h_f = @as(f64, @floatFromInt(self.h));
 
@@ -168,9 +176,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.viewTop()), w_f - @as(f64, @floatFromInt(self.sidebarWidth() + self.scrollbarGutter())), @as(f64, @floatFromInt(viewport_h)));
     c.cairo_clip(cr);
 
-    if (self.transfer_view.active) {
-        self.renderTransferList(cr);
-    } else {
+    {
         if (self.list_view) {
             const column = self.listColumn(if (self.repository() != null) 0 else self.sortColumn());
             setSource(cr, ui_theme.global.surface);
@@ -190,7 +196,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
             }
         } else if (self.items.items.len == 0) {
             setSource(cr, ui_theme.global.window_fg);
-            drawText(cr, if (self.search.text.items.len > 0 or self.folders_only) tr("No matching items") else if (self.changedOnly()) tr("No changed files") else if (self.isRecent()) tr("No recent files") else tr("This folder is empty"), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
+            drawText(cr, if (@import("app_torrent_browse.zig").emptyText(self)) |text| text else if (self.search.text.items.len > 0 or self.folders_only) tr("No matching items") else if (self.changedOnly()) tr("No changed files") else if (self.isRecent()) tr("No recent files") else tr("This folder is empty"), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
         } else {
             self.renderFileItems(cr, viewport_h);
         }
@@ -212,13 +218,9 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) self.renderChooser(cr) else self.renderStatusBar(cr, h_f);
     self.renderTerminal(cr);
 
-    if (!self.audio_bar.playlist_open and !self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
+    if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     self.renderPermissionTip(cr);
     if (self.menu != null) self.renderMenu(cr);
-    if (self.menu == null and self.dialog == null) {
-        self.renderFileOpsTip(cr);
-        self.renderTorrentSidebarTip(cr);
-    }
     if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
 
     @import("app_audio_playlist.zig").paint(self, cr);
@@ -261,8 +263,57 @@ pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, 
     else
         false;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    layer.renderer.alt_pressed = self.alt;
     ui_button.paint(&layer.renderer, layer.local(), .{ .label = label_text }, .{ .pointer = if (!enabled) .disabled else if (hovered) .hover else .idle });
     layer.finish();
+}
+
+fn addMnemonicMarker(label: []const u8, accelerator: u8, buffer: []u8) []const u8 {
+    var output_index: usize = 0;
+    var marked = false;
+    for (label) |byte| {
+        if (!marked and byte < 0x80 and std.ascii.toUpper(byte) == accelerator) {
+            buffer[output_index] = '_';
+            output_index += 1;
+            marked = true;
+        }
+        if (byte == '_') {
+            buffer[output_index] = '_';
+            buffer[output_index + 1] = '_';
+            output_index += 2;
+        } else {
+            buffer[output_index] = byte;
+            output_index += 1;
+        }
+    }
+    return buffer[0..output_index];
+}
+
+pub fn renderConflictButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, accelerator: u8, target_id: usize) void {
+    const doubled = @mulWithOverflow(label_text.len, 2);
+    if (doubled[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    const capacity = @addWithOverflow(doubled[0], 1);
+    if (capacity[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    var stack_buffer: [512]u8 = undefined;
+    const heap_allocated = capacity[0] > stack_buffer.len;
+    const marked_label: []u8 = if (!heap_allocated)
+        stack_buffer[0..capacity[0]]
+    else
+        std.heap.page_allocator.alloc(u8, capacity[0]) catch {
+            self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+            return;
+        };
+    defer {
+        if (heap_allocated) std.heap.page_allocator.free(marked_label);
+    }
+    const label = addMnemonicMarker(label_text, accelerator, marked_label);
+    self.renderButton(cr, x, y, w, h, label, true, target_id);
 }
 
 // The field's text size. Everything positioned against the text — the
@@ -270,8 +321,12 @@ pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, 
 // measuring at one size and drawing at another puts the caret a
 // proportion of the prefix width away from the glyph it belongs to, so
 // the error grows with every character typed.
-pub fn fieldFontSize() f64 {
-    return shell_ui.textSize();
+pub fn fieldFontSize(self: *App, edit: *const Editor) f64 {
+    return if (isHeaderEditor(self, edit)) header.field_font else shell_ui.textSize();
+}
+
+fn isHeaderEditor(self: *App, edit: *const Editor) bool {
+    return edit == &self.location or edit == &self.search;
 }
 
 pub fn renderLocationBar(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -284,19 +339,22 @@ pub fn renderLocationBar(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: 
 }
 
 /// The shared field look: the search box carries the search icon.
-pub fn fieldOptions(search: bool) ui_field.Options {
-    return .{ .leading_icon = if (search) .search else null };
+pub fn fieldOptions(search: bool, compact: bool) ui_field.Options {
+    return .{
+        .leading_icon = if (search) .search else null,
+        .horizontal_padding = if (compact) header.field_pad_x else null,
+    };
 }
 
 /// Where an editor's text runs inside its field.
-pub fn textArea(rect: header.Rect, search: bool) header.Rect {
-    const area = ui_field.arrange(.{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) }, fieldOptions(search), ui_theme.shellPalette()).text;
+pub fn textArea(rect: header.Rect, search: bool, compact: bool) header.Rect {
+    const area = ui_field.arrange(.{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) }, fieldOptions(search, compact), ui_theme.shellPalette()).text;
     return .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h };
 }
 
 /// The active editor's text area, for pointer hit testing.
 pub fn editorTextArea(self: *App) header.Rect {
-    return textArea(self.editorRect(), self.dialog == null and self.focus == .search);
+    return textArea(self.editorRect(), self.dialog == null and self.focus == .search, if (self.activeEditor()) |edit| isHeaderEditor(self, edit) else false);
 }
 
 pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
@@ -317,16 +375,15 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
     if (self.permissionHit(x, y) != null) return "pointer";
-    if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null) return "pointer";
-    if (self.singleClickIconAt(x, y) != null) return "pointer";
+    if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null or @import("app_torrent_browse.zig").checkHit(self, x, y) != null) return "pointer";
+    if (self.singleClickItemAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";
 }
 
-pub fn singleClickIconAt(self: *App, x: f64, y: f64) ?usize {
+pub fn singleClickItemAt(self: *App, x: f64, y: f64) ?usize {
     if (!self.single_click_open or self.chooser != null or self.dialog != null or self.menu != null) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
-    const idx = self.itemAt(x, y) orelse return null;
-    return if (self.itemIconRect(@intCast(idx)).contains(x, y)) idx else null;
+    return self.itemAt(x, y);
 }
 
 /// The rename card, anchored to the item being renamed: the same inline
@@ -350,8 +407,9 @@ pub fn renameCard(self: *App) ?RenameCard {
             x = left + 8;
             y = icon.y + icon.h / 2 - h / 2;
         } else {
-            x = icon.x + icon.w / 2 - w / 2;
-            y = icon.y + 54;
+            // Over the name, which sits right of the icon.
+            x = icon.x + icon.w + 2;
+            y = icon.y + icon.h / 2 - h / 2;
         }
         break;
     };
@@ -414,7 +472,7 @@ pub fn placeCaret(self: *App, x: f64, extend: bool) void {
     var previous: f64 = 0;
     while (p < edit.text.items.len) {
         const n = Editor.next(edit.text.items, p);
-        const pen = measureText(cr, edit.text.items[0..n], fieldFontSize(), false);
+        const pen = measureText(cr, edit.text.items[0..n], self.fieldFontSize(edit), false);
         if (target < (previous + pen) / 2) break;
         previous = pen;
         p = n;
@@ -433,9 +491,10 @@ pub fn editorCaretRect(self: *App) ?header.Rect {
     defer c.cairo_destroy(cr);
     // Measure at the buffer scale, as renderEditor and placeCaret do.
     c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
-    const metrics = fontMetrics(cr, fieldFontSize());
+    const font_size = self.fieldFontSize(edit);
+    const metrics = fontMetrics(cr, font_size);
     const ink_h = metrics.ascent + metrics.descent;
-    const pen = measureText(cr, edit.text.items[0..@min(edit.cursor, edit.text.items.len)], fieldFontSize(), false);
+    const pen = measureText(cr, edit.text.items[0..@min(edit.cursor, edit.text.items.len)], font_size, false);
     return .{ .x = area.x - edit.scroll + pen, .y = area.y + (area.h - ink_h) / 2, .w = 2, .h = ink_h };
 }
 
@@ -443,24 +502,26 @@ pub fn editorCaretRect(self: *App) ?header.Rect {
 /// editor's text, selection, any input-method preedit and the caret in the
 /// theme's colours.
 pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect, focused: bool, search: bool) void {
+    const compact = isHeaderEditor(self, edit);
+    const font_size = self.fieldFontSize(edit);
     if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) })) |begun| {
         var layer = begun;
-        _ = ui_field.paintFrame(&layer.renderer, layer.local(), fieldOptions(search), .{ .focused = focused });
+        _ = ui_field.paintFrame(&layer.renderer, layer.local(), fieldOptions(search, compact), .{ .focused = focused });
         layer.finish();
     }
     const t = ui_theme.shellPalette();
-    const area = textArea(rect, search);
+    const area = textArea(rect, search, compact);
     const text = edit.text.items;
     const sel = edit.selection();
-    const metrics = fontMetrics(cr, fieldFontSize());
+    const metrics = fontMetrics(cr, font_size);
     const ink_h = metrics.ascent + metrics.descent;
     const top = area.y + (area.h - ink_h) / 2;
     const view_w = area.w;
     const preedit: []const u8 = if (focused and self.preedit_editor == edit) self.preedit.items else "";
     const caret = @min(edit.cursor, text.len);
-    const pen = measureText(cr, text[0..caret], fieldFontSize(), false);
-    const preedit_w = if (preedit.len > 0) measureText(cr, preedit, fieldFontSize(), false) else 0;
-    const text_w = measureText(cr, text, fieldFontSize(), false) + preedit_w;
+    const pen = measureText(cr, text[0..caret], font_size, false);
+    const preedit_w = if (preedit.len > 0) measureText(cr, preedit, font_size, false) else 0;
+    const text_w = measureText(cr, text, font_size, false) + preedit_w;
     if (focused) {
         const margin = @min(view_w / 4, 12);
         const end = pen + preedit_w;
@@ -471,30 +532,37 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
     const x = area.x - if (focused) edit.scroll else 0;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
-    c.cairo_rectangle(cr, area.x, area.y + 2, view_w, area.h - 4);
+    const pad_y: f64 = if (compact) header.field_pad_y else 2;
+    c.cairo_rectangle(cr, area.x, area.y + pad_y, view_w, area.h - 2 * pad_y);
     c.cairo_clip(cr);
     if (focused and sel[0] != sel[1]) {
-        const left = measureText(cr, text[0..sel[0]], fieldFontSize(), false);
-        const right = measureText(cr, text[0..sel[1]], fieldFontSize(), false);
+        const left = measureText(cr, text[0..sel[0]], font_size, false);
+        const right = measureText(cr, text[0..sel[1]], font_size, false);
         setSource(cr, t.selectionColor());
         c.cairo_rectangle(cr, x + left, top, right - left, ink_h);
         c.cairo_fill(cr);
     }
-    const placeholder = search and text.len == 0 and preedit.len == 0;
+    const hint: ?[]const u8 = if (search)
+        tr("Search this folder")
+    else if (self.dialog != null and self.dialog.?.kind == .torrent_source and edit == &self.dialog.?.edit)
+        tr("Paste a magnet link")
+    else
+        null;
+    const placeholder = hint != null and text.len == 0 and preedit.len == 0;
     // Half-strength white, not the shell's blue-grey `faint`.
     setSource(cr, if (placeholder) withAlpha(t.fg, 0.5) else t.fg);
     if (preedit.len == 0) {
-        drawText(cr, if (placeholder) tr("Search this folder") else text, x, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, if (placeholder) hint.? else text, x, top + metrics.ascent, font_size, false);
     } else {
         // Compose at the caret: the preedit is not part of the text yet, so
         // the suffix is drawn after it and the composition is underlined.
-        drawText(cr, text[0..caret], x, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, text[0..caret], x, top + metrics.ascent, font_size, false);
         setSource(cr, t.accent);
-        drawText(cr, preedit, x + pen, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, preedit, x + pen, top + metrics.ascent, font_size, false);
         c.cairo_rectangle(cr, x + pen, top + ink_h - 1, preedit_w, 1);
         c.cairo_fill(cr);
         setSource(cr, t.fg);
-        drawText(cr, text[caret..], x + pen + preedit_w, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, text[caret..], x + pen + preedit_w, top + metrics.ascent, font_size, false);
     }
     if (focused) {
         setSource(cr, t.caretColor());
@@ -521,13 +589,10 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
     c.cairo_stroke(cr);
 
     var status_buf: [256]u8 = undefined;
+    var torrent_buf: [4400]u8 = undefined;
     var status_text: []const u8 = "";
 
-    if (self.transfer_view.active) {
-        setSource(cr, if (self.torrents.message().len > 0) ui_theme.global.danger else ui_theme.global.window_fg);
-        const count = self.torrents.items().len;
-        status_text = if (self.torrents.message().len > 0) self.torrents.message() else if (self.torrents.retry_at != null) tr("Connecting…") else i18n.fmt(&status_buf, i18n.trn("{count} transfer · Downloads continue after closing Files.", "{count} transfers · Downloads continue after closing Files.", count), .{ .count = count }) catch tr("Transfers");
-    } else if (self.status_notice != null and nowMs() < self.status_notice_until) {
+    if (self.status_notice != null and nowMs() < self.status_notice_until) {
         if (self.status_is_error) {
             setSource(cr, ui_theme.global.danger);
         } else {
@@ -537,6 +602,9 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
     } else if (self.error_message) |err| {
         setSource(cr, ui_theme.global.danger);
         status_text = i18n.fmt(&status_buf, tr("Error: {value}"), .{ .value = err }) catch err;
+    } else if (@import("app_torrent_browse.zig").statusText(self, &torrent_buf)) |text| {
+        setSource(cr, ui_theme.global.window_fg);
+        status_text = text;
     } else {
         setSource(cr, ui_theme.global.window_fg);
         var sel_count: usize = 0;
@@ -564,10 +632,6 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
 
 pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
     const dlg = self.dialog orelse return;
-    if (dlg.kind == .transfers) {
-        self.renderTransfers(cr);
-        return;
-    }
     if (dlg.kind == .properties) {
         self.dialog.?.properties.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, self.theme_cfg, self.io);
         return;
@@ -598,7 +662,7 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
     // Modal box
     const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-    const dh: f64 = 130;
+    const dh = self.smallDialogHeight();
     const dx = (w_f - dw) / 2.0;
     const dy = (h_f - dh) / 2.0;
 
@@ -619,22 +683,47 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         drawEllipsis(cr, tr("Closing ends this shell and its running jobs."), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
         self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true, 1);
         self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
+    } else if (dlg.kind == .quit_jobs) {
+        drawEllipsis(cr, @import("app_quit.zig").message(self, &buf), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
+        const button_w = (dw - 48) / 3;
+        self.renderButton(cr, dx + 16, dy + 84, button_w, 28, tr("Keep running"), true, 1);
+        self.renderButton(cr, dx + 24 + button_w, dy + 84, button_w, 28, tr("Stop them"), true, 2);
+        self.renderButton(cr, dx + 32 + 2 * button_w, dy + 84, button_w, 28, tr("Cancel"), true, 3);
     } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
         const conflict_msg = i18n.fmt(&buf, tr("File '{value}' already exists in destination."), .{ .value = conflict_str }) catch tr("Conflict");
         setSource(cr, t.fg);
         drawEllipsis(cr, conflict_msg, dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
-        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
-        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
+        if (self.managerConflictCanMerge()) {
+            const button_width = (dw - 56) / 4;
+            self.renderConflictButton(cr, dx + 16, dy + 84, button_width, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + button_width, dy + 84, button_width, 28, tr("Merge"), 'M', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * button_width, dy + 84, button_width, 28, tr("Rename"), 'R', 3);
+            self.renderConflictButton(cr, dx + 40 + 3 * button_width, dy + 84, button_width, 28, tr("Cancel"), 'C', 4);
+        } else {
+            self.renderConflictButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename"), 'R', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel"), 'C', 3);
+        }
+        if (dlg.service_conflict) {
+            const r = self.applyAllRect();
+            if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) })) |begun| {
+                var layer = begun;
+                ui_checkbox.paint(&layer.renderer, layer.local(), tr("Apply to all"), .{
+                    .checked = dlg.conflict_apply_all,
+                    .focused = r.contains(self.mouse_x, self.mouse_y),
+                });
+                layer.finish();
+            }
+        }
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
 
         setSource(cr, t.fg);
         if (dw >= 420) drawText(cr, tr("Enter confirms · Esc cancels"), dx + 16, dy + 102, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("OK"), true, 1);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, if (dlg.kind == .new_folder_from_selection) tr("Create") else tr("OK"), true, 1);
         self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
     }
 }

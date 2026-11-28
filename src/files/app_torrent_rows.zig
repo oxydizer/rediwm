@@ -22,12 +22,12 @@ fn matchesPath(t: Transfer, path: []const u8) bool {
         (t.published and containsPath(t.destination, path));
 }
 pub fn torrentForItem(self: *App, index: usize) ?Transfer {
-    if (self.chooser != null or self.transfer_view.active or self.history.archive_len > 0 or index >= self.items.items.len) return null;
+    if (self.chooser != null or self.history.archive_len > 0 or index >= self.items.items.len) return null;
     for (self.torrents.items()) |t| if (matchesPath(t, self.items.items[index].path)) return t;
     return null;
 }
 pub fn hasFolderTransfers(self: *App) bool {
-    if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return false;
+    if (self.chooser != null or self.history.archive_len > 0) return false;
     for (self.torrents.items()) |t| {
         if (std.mem.eql(u8, t.download_directory, self.history.current) or
             std.mem.eql(u8, std.fs.path.dirname(t.source) orelse "", self.history.current) or
@@ -74,7 +74,7 @@ fn inlineLayout(self: *App, index: usize) ?InlineLayout {
     const row: i32 = @intCast(index / @as(usize, @intCast(self.columns())));
     const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + row * self.rowHeight() - self.scroll_y);
     const right: f64 = if (self.list_view) self.listColumn(0).x + self.listColumn(0).w - 4 else @as(f64, @floatFromInt(self.sidebarWidth() + 20 + (@as(i32, @intCast(index)) + 1 - row * self.columns()) * self.cellWidth() - 20)) - 8;
-    const available = if (self.list_view) self.listColumn(0).w - 68 else @as(f64, @floatFromInt(self.cellWidth() - 36));
+    const available = if (self.list_view) self.listColumn(0).w - 68 else @as(f64, @floatFromInt(self.cellWidth() - 28)) - App.GridCard.label_x;
     if (available < 56) return null;
     const width: f64 = if (available >= 210) 156 else if (!self.list_view) @min(156, available) else 60;
     const top = if (self.list_view) y + (@as(f64, @floatFromInt(self.cardHeight())) - 28) / 2 else y + App.GridCard.detail_baseline - 20;

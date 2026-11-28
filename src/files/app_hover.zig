@@ -151,7 +151,7 @@ pub fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
 
 /// The pointer's list header column, using Files' existing header geometry.
 pub fn updateColumnSurface(self: *App) void {
-    if (!self.list_view or self.transfer_view.active or self.dialog != null or self.menu != null) {
+    if (!self.list_view or self.dialog != null or self.menu != null) {
         _ = self.column_surface.pointerMotion(null);
         return;
     }
@@ -216,7 +216,7 @@ pub fn updateDialogSurface(self: *App) void {
     };
 
     // These dialogs retain their own interaction and hit-testing paths.
-    if (dlg.kind == .transfers or dlg.kind == .properties or
+    if (dlg.kind == .properties or
         dlg.kind == .open_with or dlg.kind == .trash_confirm)
     {
         _ = self.dialog_surface.pointerMotion(null);
@@ -236,9 +236,12 @@ pub fn updateDialogSurface(self: *App) void {
         const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
         const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
 
-        if (dlg.kind == .conflict) {
-            const button_w = (dw - 48) / 3;
-            for (0..3) |i| {
+        if (dlg.kind == .conflict or dlg.kind == .quit_jobs) {
+            // Merge makes the conflict dialog four buttons wide.
+            const buttons: usize = if (dlg.kind == .conflict and self.managerConflictCanMerge()) 4 else 3;
+            const gaps: f64 = @floatFromInt(8 * (buttons - 1) + 32);
+            const button_w = (dw - gaps) / @as(f64, @floatFromInt(buttons));
+            for (0..buttons) |i| {
                 const rect: header.Rect = .{
                     .x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8),
                     .y = dy + 84,
@@ -326,7 +329,7 @@ pub fn updateSidebarSurface(self: *App) void {
 
 /// The pointer's item card, using Files' existing itemAt geometry.
 pub fn updateItemSurface(self: *App) void {
-    if (self.dialog != null or self.menu != null or self.transfer_view.active) {
+    if (self.dialog != null or self.menu != null) {
         _ = self.item_surface.pointerMotion(null);
         return;
     }
@@ -401,7 +404,7 @@ pub fn hoveredPlace(self: *App) ?usize {
 
 /// The pointer's item, unless it is selected, which paints its own fill.
 pub fn hoveredItem(self: *App) ?usize {
-    if (self.dialog != null or self.menu != null or self.transfer_view.active) return null;
+    if (self.dialog != null or self.menu != null) return null;
     const target = self.item_surface.hovered orelse return null;
     const idx: usize = @intCast(target.id);
     if (idx >= self.items.items.len) return null;
@@ -439,8 +442,9 @@ pub fn toolbarButtonVisible(self: *App, action: header.Action) bool {
 
 pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
     if (self.isRecent() and (action == .new or action == .paste)) return false;
+    // Inside an archive Copy exports the selected members (`copySelected`).
     if (self.history.archive_len > 0) switch (action) {
-        .new, .cut, .copy, .paste, .trash => return false,
+        .new, .cut, .paste, .trash => return false,
         else => {},
     };
     switch (self.trashRelation()) {
@@ -466,7 +470,7 @@ pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
 }
 
 pub fn updateToolbarSurface(self: *App) void {
-    const action = if (self.transfer_view.active or self.dialog != null or self.menu != null)
+    const action = if (self.dialog != null or self.menu != null)
         null
     else
         header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y);
@@ -509,7 +513,7 @@ pub fn toolbarButtonProximity(
     if (x < 0 or y < 0 or
         x >= @as(f64, @floatFromInt(self.w)) or
         y >= @as(f64, @floatFromInt(self.h)) or
-        self.transfer_view.active or self.dialog != null or self.menu != null or
+        self.dialog != null or self.menu != null or
         !self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action))
         return absent;
 
@@ -700,7 +704,7 @@ pub fn stepHover(self: *App, now: i64) void {
         self.hover_active = self.hover_active or !item.selection_fill.animation.settled(now) or !item.selection_border.animation.settled(now);
     }
     const field = header.field(self.w);
-    const hit = if (!self.transfer_view.active and !self.search_visible and self.focus != .location_bar and
+    const hit = if (!self.search_visible and self.focus != .location_bar and
         self.dialog == null and self.menu == null and field.contains(self.mouse_x, self.mouse_y))
         self.breadcrumbs(null, self.mouse_x)
     else

@@ -117,6 +117,7 @@ pub fn toggle(self: *Self, world: *World) void {
         out.closeStartMenu();
         out.closePowerMenu();
         out.closeWifi();
+        out.closeTransfers();
         out.closeBattery();
         out.closeCalendar();
     }

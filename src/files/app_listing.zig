@@ -1,6 +1,7 @@
 //! Files listing: navigation, history moves, snapshot sync and the filtered, sorted view.
 
 const std = @import("std");
+const torrent_browse = @import("app_torrent_browse.zig");
 const ui_profile = @import("ui_profile.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
@@ -8,7 +9,6 @@ const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const worker_mod = @import("worker.zig");
-const ops_mod = @import("ops.zig");
 const recent = @import("recent.zig");
 const collation = @import("collation.zig");
 const fold = @import("ui").fold;
@@ -35,22 +35,39 @@ pub fn navigate(self: *App, new_path: []const u8) void {
 }
 
 pub fn refresh(self: *App) void {
+    // A torrent is not on disk: its rows come from the helper.
+    if (torrent_browse.active(self)) {
+        self.rebuildView();
+        return;
+    }
     // A virtual directory cannot be scanned by the filesystem worker.
     // Refresh its manifest projection instead while the transfer is active.
-    if (self.transfer_browse_root != null and
-        (self.job_state == .running or self.job_state == .paused or
-            self.job_state == .waiting_conflict))
-    {
-        self.transfer_tree_state.markDirty();
+    if (self.transfer_browse_root != null and @import("app_ghosts.zig").active(self)) {
         self.transfer_rows_dirty = true;
         self.rebuildView();
         return;
     }
     clearTransferBrowse(self);
-    self.clearFolderSizes();
+    self.revalidateFolderSizes();
     self.beginLoading();
     self.active_request_id = self.worker.refresh();
     self.invalidate();
+}
+
+/// Select the newly grouped folder when this refresh reaches the view.
+pub fn refreshAndSelectFolder(self: *App, destination: []const u8) void {
+    const name = std.fs.path.basename(destination);
+    const path = @import("worker_scan.zig").listingPath(self.allocator, self.history.current, name) catch {
+        self.refresh();
+        return;
+    };
+    if (self.grouped_folder_selection) |old| self.allocator.free(old);
+    self.grouped_folder_selection = path;
+    if (!self.show_hidden and std.mem.startsWith(u8, name, ".")) {
+        self.toggleHidden();
+    } else {
+        self.refresh();
+    }
 }
 
 pub fn toggleHidden(self: *App) void {
@@ -66,10 +83,6 @@ pub fn selectOnLoad(self: *App, path: []const u8) void {
 }
 
 pub fn back(self: *App) void {
-    if (self.transfer_view.active) {
-        self.leaveTransfers();
-        return;
-    }
     self.rememberView();
     if (self.history.back() catch null) |path| {
         self.applyHistoryNav(path);
@@ -137,9 +150,18 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
         self.transfer_browse_root = self.allocator.dupe(u8, path) catch null;
         transfer_browse = self.transfer_browse_root != null;
     }
+    // Inside a torrent, nothing is scanned either.
+    const torrent = torrent_browse.active(self);
+    if (torrent) {
+        clearTransferBrowse(self);
+        transfer_browse = true;
+    }
 
-    self.leaveTransfers();
     self.navigation_count +%= 1;
+    if (self.paste_folder_requested) |destination| self.allocator.free(destination);
+    self.paste_folder_requested = null;
+    if (self.grouped_folder_selection) |pending| self.allocator.free(pending);
+    self.grouped_folder_selection = null;
     self.overwrite_pending = false;
     if (self.chooser != null and self.chooser.?.mode == .open) self.setChooserName("");
     self.cancelWheel();
@@ -161,6 +183,7 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.scroll_y = 0;
     self.selection_anchor = null;
     self.focused_index = null;
+    self.applyFolderView();
     if (transfer_browse) {
         self.loading = false;
         self.scan_notice_shown = false;
@@ -176,6 +199,8 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.location.anchor = self.location.cursor;
     self.location.scroll = 0;
 
+    torrent_browse.leave(self);
+    if (torrent) torrent_browse.enter(self);
     if (transfer_browse) {
         self.rebuildView();
         if (self.restore_view) self.restoreView();
@@ -196,140 +221,10 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 
 /// Damage only the surfaces that display file-operation byte progress.
 /// Structural changes still use invalidate(), because they can change layout.
-fn damageFolderProgressBatch(
-    self: *App,
-    runner: *ops_mod.JobRunner,
-    paths: []const []const u8,
-    indices: []const usize,
-) void {
-    const profile_started = ui_profile.start();
-    defer ui_profile.finish(profile_started, "progress_damage_lookup", paths.len);
-
-    var results: [64]?f64 = undefined;
-    var matched: [64]bool = undefined;
-    runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]) catch return;
-
-    for (results[0..paths.len], matched[0..paths.len], indices) |result, was_matched, index| {
-        if (!was_matched or result == null) continue;
-        const icon = self.itemIconRect(@intCast(index));
-        const ring_size = @min(26.0, icon.w);
-        self.addDamageRegion(self.clipToViewport(.{
-            .x = icon.x + (icon.w - ring_size) / 2 - 2,
-            .y = icon.y + (icon.w - ring_size) / 2 - 2,
-            .w = ring_size + 4,
-            .h = ring_size + 4,
-        }));
-    }
-}
-
-fn damageJobProgress(
-    self: *App,
-    damage_surfaces: bool,
-    damage_tooltip: bool,
-    previous_file_path: []const u8,
-    current_file_path: []const u8,
-) void {
-    if (damage_surfaces) {
-        if (self.transfer_view.active) {
-            // The file operation is the final row in the Transfers hub.
-            const row = @import("app_torrents.zig").fileOperationRowRect(
-                self,
-                self.torrents.items().len,
-            );
-            self.addDamageRegion(self.clipToViewport(row));
-        } else if (self.job_runner) |runner| {
-            // Parent-folder progress rings are drawn inside visible item icons.
-            const columns = self.columns();
-            const first = @divTrunc(self.scroll_y, self.rowHeight()) * columns;
-            const last = @min(
-                @as(i32, @intCast(self.items.items.len)),
-                (@divTrunc(
-                    self.scroll_y + @max(0, self.contentBottom() - self.viewTop()),
-                    self.rowHeight(),
-                ) + 1) * columns,
-            );
-
-            var paths: [64][]const u8 = undefined;
-            var indices: [64]usize = undefined;
-            var path_count: usize = 0;
-            var index = first;
-            while (index < last) : (index += 1) {
-                const item = self.items.items[@intCast(index)];
-                if (item.is_dir and !item.is_symlink) {
-                    paths[path_count] = item.path;
-                    indices[path_count] = @intCast(index);
-                    path_count += 1;
-                    if (path_count == paths.len) {
-                        damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
-                        path_count = 0;
-                    }
-                }
-                const active_file =
-                    (current_file_path.len > 0 and std.mem.eql(u8, item.path, current_file_path)) or
-                    (previous_file_path.len > 0 and
-                    !std.mem.eql(u8, previous_file_path, current_file_path) and
-                    std.mem.eql(u8, item.path, previous_file_path));
-                if (active_file) {
-                    if (item.transfer_ghost) {
-                        const row_y = self.viewTop() + self.itemInset() +
-                            @divTrunc(index, columns) * self.rowHeight() - self.scroll_y;
-                        self.addDamageRegion(self.clipToViewport(.{
-                            .x = @floatFromInt(self.sidebarWidth()),
-                            .y = @floatFromInt(row_y),
-                            .w = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()),
-                            .h = @floatFromInt(self.cardHeight()),
-                        }));
-                    } else {
-                        const icon = self.itemIconRect(@intCast(index));
-                        const ring_size = @min(26.0, icon.w);
-                        self.addDamageRegion(self.clipToViewport(.{
-                            .x = icon.x + (icon.w - ring_size) / 2 - 2,
-                            .y = icon.y + (icon.w - ring_size) / 2 - 2,
-                            .w = ring_size + 4,
-                            .h = ring_size + 4,
-                        }));
-                    }
-                }
-            }
-            if (path_count > 0) {
-                damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
-            }
-        }
-
-        // The sidebar progress row remains visible alongside either main view.
-        const transfers = self.sidebarLayout().cards[
-            @intFromEnum(@import("app_model.zig").SidebarSection.transfers)
-        ];
-        if (transfers.visible and transfers.expanded and self.sidebarWidth() > 0) {
-            const area = @import("app_sidebar_paint.zig").fileOpsBox(self);
-            if (area.w >= 120) {
-                self.addDamageRegion(.{
-                    .x = @floatCast(area.x),
-                    .y = @floatCast(area.y),
-                    .w = @floatCast(area.w),
-                    .h = @floatCast(area.h),
-                });
-            }
-        }
-    }
-
-    // The tooltip is the only other consumer of the live byte/rate counters.
-    if (damage_tooltip) {
-        if (@import("app_transfer_tip.zig").bounds(
-            self.w,
-            self.h,
-            self.mouse_x,
-            self.mouse_y,
-            2,
-        )) |rect| {
-            self.addDamageRegion(rect);
-        }
-    }
-}
-
 pub fn sync(self: *App) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "sync", self.items.items.len);
+    defer self.syncVisibleFolderSizes();
 
     if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {
@@ -337,6 +232,7 @@ pub fn sync(self: *App) void {
         self.setStatusNotice(notice, false);
     }
     self.syncFolderSizes();
+    self.syncFolderView();
     if (self.dialog) |*dlg| if (dlg.trash_properties) |*props| if (props.poll()) self.invalidate();
     _ = c.pthread_mutex_lock(&self.worker.mutex);
     const animation_settings = self.worker.animation_settings;
@@ -346,6 +242,7 @@ pub fn sync(self: *App) void {
     if (new_theme) |t| {
         self.single_click_open = t.single_click_open;
         self.audio_player = t.audio_player;
+        self.setDefaultFoldersFirst(t.folders_first);
         self.open_on_release = null;
         t.apply();
         self.theme_cfg.override_root = @import("app_kit").settings.iconRoot();
@@ -365,164 +262,20 @@ pub fn sync(self: *App) void {
         self.clampScroll();
         self.invalidate();
     }
-    if (self.job_runner) |runner| {
-        const progress = runner.pollProgress();
-        const current_file_path = if (progress.state == .running or progress.state == .paused)
-            progress.current_file_path[0..progress.current_file_path_len]
-        else
-            "";
-        const previous_file_path = self.job_current_file_path[0..self.job_current_file_path_len];
-        const file_path_changed = !std.mem.eql(u8, previous_file_path, current_file_path);
-        const sample_at = nowMs();
-        var rate_changed = false;
-        if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
-            if (self.job_rate_sample_at == 0) {
-                self.job_rate_sample_at = sample_at;
-                self.job_rate_sample_bytes = progress.transferred_bytes;
-                self.job_bytes_per_second = 0;
-            } else if (sample_at - self.job_rate_sample_at >= 500) {
-                const elapsed = @max(1, sample_at - self.job_rate_sample_at);
-                const transferred = progress.transferred_bytes -| self.job_rate_sample_bytes;
-                self.job_bytes_per_second = if (progress.state == .running)
-                    @intFromFloat(@as(f64, @floatFromInt(transferred)) * 1000.0 / @as(f64, @floatFromInt(elapsed)))
-                else
-                    0;
-                self.job_rate_sample_at = sample_at;
-                self.job_rate_sample_bytes = progress.transferred_bytes;
-                rate_changed = true;
-            }
-        } else {
-            self.job_rate_sample_at = 0;
-            self.job_rate_sample_bytes = 0;
-            self.job_bytes_per_second = 0;
-        }
-        if (progress.state == .waiting_conflict) {
-            if (self.dialog == null or self.dialog.?.kind != .conflict) {
-                self.openConflictDialog(progress.conflict_item_name);
-            }
-        } else if (self.dialog != null and self.dialog.?.kind == .conflict and progress.state != .waiting_conflict) {
-            self.closeDialog();
-        }
-
-        if (progress.state == .finished) {
-            if (self.job_was_running) {
-                self.job_was_running = false;
-                self.transfer_tree_state.markDirty();
-                self.setStatusNotice(progress.status_message, progress.is_error);
-                if (self.clipboard_cut and !self.clipboard_is_text and self.job_cut_revision == self.clipboard_revision) {
-                    var i: usize = 0;
-                    var changed = false;
-                    while (i < self.clipboard_paths.items.len) {
-                        if (runner.movedSuccessfully(self.clipboard_paths.items[i])) {
-                            self.allocator.free(self.clipboard_paths.orderedRemove(i));
-                            changed = true;
-                        } else i += 1;
-                    }
-                    if (self.clipboard_paths.items.len == 0) self.clipboard_cut = false;
-                    if (changed) self.clipboard_revision += 1;
-                }
-                if (runner.kind == .open_archive_member) {
-                    if (runner.result_path) |path| {
-                        if (self.archive_open_navigation == self.navigation_count) self.openExtracted(path, self.archive_preview);
-                    }
-                } else {
-                    // The manifest is no longer the source of truth once the
-                    // job finishes. Scan the now-real destination directory.
-                    const was_transfer_browsing = self.transfer_browse_root != null;
-                    clearTransferBrowse(self);
-                    if (was_transfer_browsing) {
-                        // Virtual navigation doesn't update worker.current_dir.
-                        // Explicitly scan the location currently shown.
-                        self.clearFolderSizes();
-                        self.beginLoading();
-                        self.active_request_id = self.worker.navigateLocation(
-                            self.history.current,
-                            self.show_hidden,
-                            self.history.archive_len,
-                        );
-                        self.invalidate();
-                    } else {
-                        self.refresh();
-                    }
-                }
-            }
-        } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
-            self.job_was_running = true;
-            const state_changed = self.job_state != progress.state;
-            const processed_changed = self.job_progress != progress.processed_items;
-            const measuring_changed = self.job_measuring != progress.measuring;
-            const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
-            const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
-            // Active-file transitions only change progress presentation.
-            // They do not change the direct-child transfer rows for a
-            // directory transfer, so do not rebuild the entire listing.
-            if (state_changed or measuring_changed or
-                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
-            {
-                self.transfer_rows_dirty = true;
-            }
-            if (state_changed or measuring_changed or
-                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
-            {
-                self.transfer_tree_state.markDirty();
-            }
-            if (state_changed or measuring_changed) {
-                self.invalidate();
-            } else if (processed_changed or bytes_changed or file_path_changed or
-                (rate_changed and tooltip_hovered))
-            {
-                damageJobProgress(
-                    self,
-                    processed_changed or bytes_changed or file_path_changed,
-                    tooltip_hovered,
-                    previous_file_path,
-                    current_file_path,
-                );
-            }
-        }
-        if (file_path_changed) {
-            self.job_current_file_path_len = 0;
-            if (current_file_path.len <= self.job_current_file_path.len) {
-                @memcpy(self.job_current_file_path[0..current_file_path.len], current_file_path);
-                self.job_current_file_path_len = current_file_path.len;
-            }
-        }
-        self.job_progress = progress.processed_items;
-        self.job_state = progress.state;
-        self.job_transferred_bytes = progress.transferred_bytes;
-        self.job_measuring = progress.measuring;
-    }
-
-    const file_ops_active = self.job_state == .running or
-        self.job_state == .paused or
-        self.job_state == .waiting_conflict;
-    const torrent_active = for (self.torrents.items()) |transfer| {
-        if (transfer.@"error".len == 0 and
-            !transfer.finished and
-            !(transfer.pending and transfer.metadata))
-        {
-            break true;
-        }
-    } else false;
-    const transfers_active = file_ops_active or torrent_active;
-    if (transfers_active and !self.transfers_were_active) {
-        self.sidebar_expanded[@intFromEnum(@import("app_model.zig").SidebarSection.transfers)] = true;
-        self.invalidate();
-    }
-    self.transfers_were_active = transfers_active;
-
     if (self.status_notice != null and nowMs() >= self.status_notice_until) {
         self.allocator.free(self.status_notice.?);
         self.status_notice = null;
         self.invalidate();
     }
 
-    if (self.transfer_view.active) return;
-
     // A background refresh must not reorder items or cancel a gesture
     // while the button is held. The worker retains its latest snapshot;
     // the first loop after release applies it.
-    if (self.selection_band != null or self.drag_origin != null) return;
+    if (self.selection_band != null or self.drag_origin != null or
+        self.wheel_glide.active())
+    {
+        return;
+    }
     const snap = self.worker.takeSnapshot() orelse {
         if (self.torrents.rows_changed or self.transfer_rows_dirty) {
             self.transfer_rows_dirty = false;
@@ -530,13 +283,17 @@ pub fn sync(self: *App) void {
         }
         return;
     };
+    applySnapshot(self, snap);
+}
+
+pub fn applySnapshot(self: *App, snap: *worker_mod.Snapshot) void {
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
         snap.destroy();
         return;
     }
     // A worker result from before virtual navigation must never replace the
     // manifest-backed listing with a snapshot of another directory.
-    if (self.transfer_browse_root != null) {
+    if (self.transfer_browse_root != null or torrent_browse.active(self)) {
         snap.destroy();
         if (self.torrents.rows_changed or self.transfer_rows_dirty) {
             self.transfer_rows_dirty = false;
@@ -550,6 +307,21 @@ pub fn sync(self: *App) void {
     self.column_resize = null;
     self.clampSidebarScroll();
     self.loading = false;
+    // The new folder may have a different name from the items a search matched.
+    if (self.grouped_folder_selection) |path| {
+        if (!self.changedOnly() and self.search.text.items.len > 0) {
+            for (snap.items) |item| {
+                if (!item.is_dir or !std.mem.eql(u8, item.path, path)) continue;
+                if (!self.matches(item)) {
+                    self.search.text.clearRetainingCapacity();
+                    self.search.cursor = 0;
+                    self.search_visible = false;
+                }
+                break;
+            }
+        }
+    }
+    self.revalidateFolderSizes();
     self.rebuildView();
     self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
@@ -558,6 +330,19 @@ pub fn sync(self: *App) void {
         for (self.items.items, 0..) |*item, i| {
             if (!std.mem.eql(u8, item.path, path)) continue;
             item.selected = true;
+            self.focused_index = i;
+            self.selection_anchor = i;
+            self.revealIndex(i);
+            break;
+        }
+    }
+    if (self.grouped_folder_selection) |path| {
+        self.grouped_folder_selection = null;
+        defer self.allocator.free(path);
+        for (self.items.items, 0..) |item, i| {
+            if (!item.is_dir or item.missing or !std.mem.eql(u8, item.path, path)) continue;
+            for (self.items.items, 0..) |*row, index| row.selected = index == i;
+            self.focus = .file_view;
             self.focused_index = i;
             self.selection_anchor = i;
             self.revealIndex(i);
@@ -610,8 +395,15 @@ pub fn matches(self: *App, item: worker_mod.Item) bool {
 }
 
 pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
-    // Keep directories ahead of files for every sort mode.
-    if (a.is_dir != b.is_dir) return a.is_dir;
+    return ordered(.{ .mode = mode, .folders_first = true }, a, b);
+}
+
+pub const Order = struct { mode: Sort, folders_first: bool };
+
+pub fn ordered(order_by: Order, a: ViewItem, b: ViewItem) bool {
+    const mode = order_by.mode;
+    // Directories ahead of files for every sort mode, unless turned off.
+    if (order_by.folders_first and a.is_dir != b.is_dir) return a.is_dir;
     if (mode == .size or mode == .size_asc) {
         if (a.is_dir and b.is_dir) {
             const a_calc = a.bytes >= 0;
@@ -637,7 +429,11 @@ pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
 }
 
 pub fn rebuildView(self: *App) void {
-    const snap = self.snapshot orelse return;
+    const torrent = torrent_browse.active(self);
+    // A torrent's rows need no listing; a window opened straight into one
+    // may have none yet.
+    if (self.snapshot == null and !torrent) return;
+    const snap_opt = self.snapshot;
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "listing_rebuild", self.items.items.len);
 
@@ -653,6 +449,7 @@ pub fn rebuildView(self: *App) void {
     defer old_items.deinit(self.allocator);
     const old_focus = if (self.focused_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
     const old_anchor = if (self.selection_anchor) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
+    const old_click = if (self.last_click_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
     var selected_paths = std.StringHashMap(ViewItem).init(self.allocator);
     defer selected_paths.deinit();
     for (old_items.items) |item| {
@@ -661,25 +458,26 @@ pub fn rebuildView(self: *App) void {
     self.items_arena = std.heap.ArenaAllocator.init(self.allocator);
     const mem = self.items_arena.allocator();
     self.items = .empty;
-    self.error_message = if (self.transfer_browse_root != null) null else snap.err_msg;
+    self.error_message = if (self.transfer_browse_root != null or torrent) null else snap_opt.?.err_msg;
     self.focused_index = null;
     self.selection_anchor = null;
     self.last_click_index = null;
     if (self.error_message == null) {
-        if (self.transfer_browse_root == null) {
+        if (torrent) {
+            torrent_browse.appendRows(self, mem, &selected_paths);
+        } else if (self.transfer_browse_root == null) {
+            const snap = snap_opt.?;
             for (if (self.changedOnly()) snap.changed else snap.items) |it| {
             if (!self.matches(it)) continue;
             const previous = selected_paths.get(it.path);
             const selected = if (previous) |item| item.selected else false;
             var bytes = it.bytes;
             if (it.is_dir and !it.is_symlink) {
-                if (self.folder_sizes.get(it.path)) |sz| {
-                    switch (sz) {
-                        .done => |d| bytes = d.bytes,
-                        else => bytes = -1,
-                    }
-                } else {
-                    bytes = -1;
+                // Folders sort by what is known of their size, unknown last.
+                bytes = -1;
+                if (self.size_service orelse @import("app_folder_size.zig").sharedService()) |svc| {
+                    const info = svc.lookupIdentity(null, it.path, it.directory_key);
+                    if (info.known()) bytes = info.bytes;
                 }
             }
             self.items.append(self.allocator, .{
@@ -690,6 +488,7 @@ pub fn rebuildView(self: *App) void {
                 .is_dir = it.is_dir,
                 .is_symlink = it.is_symlink,
                 .is_broken = it.is_broken,
+                .directory_key = it.directory_key,
                 .git_status = it.git_status,
                 .git_lines = it.git_lines,
                 .missing = it.missing,
@@ -708,7 +507,7 @@ pub fn rebuildView(self: *App) void {
             }
             self.appendTorrentRows(mem, &selected_paths);
         }
-        self.appendTransferRows(mem, &selected_paths);
+        if (!torrent) @import("app_ghosts.zig").appendRows(self, mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.
@@ -717,7 +516,7 @@ pub fn rebuildView(self: *App) void {
         var missing_key = false;
         for (self.items.items) |*item| {
             if (item.sort_key != null) continue;
-            if (fallback_locale == null) fallback_locale = collation.Locale.init(snap.collation_name) orelse collation.Locale.init("C").?;
+            if (fallback_locale == null) fallback_locale = (if (snap_opt) |snap| collation.Locale.init(snap.collation_name) else null) orelse collation.Locale.init("C").?;
             item.sort_key = fallback_locale.?.key(mem, item.text()) catch null;
             missing_key = missing_key or item.sort_key == null;
         }
@@ -726,13 +525,16 @@ pub fn rebuildView(self: *App) void {
         if (missing_key) for (self.items.items) |*item| {
             item.sort_key = null;
         };
-        std.mem.sort(ViewItem, self.items.items, self.effectiveSort(), lessThan);
+        std.mem.sort(ViewItem, self.items.items, Order{ .mode = self.effectiveSort(), .folders_first = self.folders_first }, ordered);
         for (self.items.items, 0..) |item, i| {
             if (old_focus) |path| {
                 if (std.mem.eql(u8, path, item.path)) self.focused_index = i;
             }
             if (old_anchor) |path| {
                 if (std.mem.eql(u8, path, item.path)) self.selection_anchor = i;
+            }
+            if (old_click) |path| {
+                if (std.mem.eql(u8, path, item.path)) self.last_click_index = i;
             }
         }
     }
@@ -781,12 +583,12 @@ pub fn sortByColumn(self: *App, column: usize) void {
     };
     self.setSort(mode);
     self.rebuildView();
-    self.savePreferences();
+    self.recordFolderView();
     self.startSortFeedback(nowMs());
 }
 
 pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
-    if (!self.list_view and !self.transfer_view.active) return;
+    if (!self.list_view) return;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.contentTop()), @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()), 30);
@@ -801,7 +603,7 @@ pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
             c.cairo_rectangle(cr, rect.x + rect.w - 0.5, rect.y + 6, 1, rect.h - 12);
             c.cairo_fill(cr);
         }
-        const sorted = !self.transfer_view.active and self.sortColumn() == i and (self.repository() == null or i == 0);
+        const sorted = self.sortColumn() == i and (self.repository() == null or i == 0);
         const hovered = self.hoverKey() == 400 + i;
         if (sorted) {
             setSource(cr, ui_theme.global.surface);

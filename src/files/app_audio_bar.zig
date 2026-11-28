@@ -23,7 +23,7 @@ pub const State = struct {
 const tr = @import("i18n").tr;
 
 pub fn visible(self: *App) bool {
-    return self.chooser == null and !self.transfer_view.active and self.audio_link != null and self.audio_state.status != .none;
+    return self.chooser == null and self.audio_link != null and self.audio_state.status != .none;
 }
 
 pub fn extraHeight(self: *App) i32 {
@@ -46,7 +46,8 @@ pub fn rect(self: *App) ?header.Rect {
     if (!visible(self)) return null;
     if (extraHeight(self) == 0) {
         const w = inlineWidth(self);
-        return if (w < single_row_min) .{ .x = 284, .y = 62, .w = w, .h = 40 } else .{ .x = 284, .y = 64, .w = w, .h = 36 };
+        const h: f64 = if (w < single_row_min) 40 else 36;
+        return .{ .x = 284, .y = header.nav_height + (header.action_height - h) / 2, .w = w, .h = h };
     }
     const w: f64 = @floatFromInt(self.w - 32);
     return .{ .x = 16, .y = @floatFromInt(header.height(self.w, self.inRepository())), .w = w, .h = if (w < single_row_min) 40 else 36 };

@@ -23,9 +23,7 @@ const roundedRect = @import("app_draw.zig").roundedRect;
 const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
-const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
-const transferTip = @import("app_transfer_tip.zig");
 
 /// A quiet surface separating the sidebar's four functional sections.
 fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -136,16 +134,11 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         @intFromFloat(self.gitCardHeight())
     else
         0;
-    const torrent_height = self.torrentSidebarHeight();
-    const file_ops_height = self.fileOpsSidebarHeight();
-    const transfers_body = torrent_height +
-        (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0);
-    const transfers_visible = torrent_height > 0 or file_ops_height > 0;
 
     return app_model.SidebarLayout.init(
         top,
-        .{ places_body, disks_body, git_body, transfers_body },
-        .{ true, self.device_list.items.len > 0, self.repository() != null, transfers_visible },
+        .{ places_body, disks_body, git_body },
+        .{ true, self.device_list.items.len > 0, self.repository() != null },
         self.sidebar_expanded,
     );
 }
@@ -210,7 +203,7 @@ pub fn sidebarBodyY(self: *App, section: app_model.SidebarSection, x: f64, y: f6
     const source_top: i32 = switch (section) {
         .places => self.contentTop() - self.sidebar_scroll,
         .disks => self.pinRowY(self.pins.items.items.len) + 24,
-        .git, .transfers => card.y + card.header_height,
+        .git => card.y + card.header_height,
     };
     return y - body_top + @as(f64, @floatFromInt(source_top));
 }
@@ -345,7 +338,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         tr("PLACES"),
         tr("DRIVES"),
         "GIT",
-        tr("TRANSFERS"),
     };
     for (layout.cards, 0..) |card, i| {
         if (!card.visible) continue;
@@ -380,7 +372,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
                 .device => unreachable,
             };
             const alpha: f32 = if (pin != null and pin.?.kind == .missing) 0.5 else 1;
-            const active = !self.transfer_view.active and std.mem.eql(u8, path, self.history.current);
+            const active = std.mem.eql(u8, path, self.history.current);
             if (active) {
                 const row = self.placeRect(i);
                 shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
@@ -450,12 +442,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
 
     const git_card = layout.cards[@intFromEnum(app_model.SidebarSection.git)];
     if (git_card.expanded) self.renderGitSidebar(cr, content_width);
-
-    const transfers_card = layout.cards[@intFromEnum(app_model.SidebarSection.transfers)];
-    if (transfers_card.expanded) {
-        self.renderTorrentSidebar(cr);
-        self.renderFileOpsSidebar(cr);
-    }
 }
 
 /// The line a drag shows between pins: where a drop would put its pin.
@@ -480,166 +466,8 @@ pub fn sidebarExtent(self: *App) i32 {
     return bottom + self.sidebar_scroll + app_model.SidebarLayout.gap;
 }
 
-pub fn fileOpsBox(self: *App) shell_ui.Rect {
-    const card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.transfers)];
-    return .{
-        .x = 12,
-        .y = @floatFromInt(card.y + card.header_height + self.torrentSidebarHeight() + app_model.SidebarLayout.gap),
-        .w = @floatCast(@max(0, self.sidebarContentWidth() - 24)),
-        .h = 52,
-    };
-}
-
-fn fileOpsPauseRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 54, 2);
-}
-
-fn fileOpsCancelRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 26, 2);
-}
-
-fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
-    return sidebar_controls.contains(rect, x, y);
-}
-
-pub fn fileOpsSidebarHeight(self: *App) i32 {
-    const runner = self.job_runner orelse return 0;
-    const state = runner.pollProgress().state;
-    return if (state == .running or state == .paused or state == .waiting_conflict) 60 else 0;
-}
-
-pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
-    if (self.fileOpsSidebarHeight() == 0 or self.chooser != null or self.dialog != null) return false;
-    if (self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or
-        y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
-    const area = fileOpsBox(self);
-    return x >= area.x and x < area.x + area.w and y >= area.y and y < area.y + area.h;
-}
-
-pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
-    if (!self.fileOpsSidebarHit(x, y)) return 0;
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        return std.math.maxInt(usize) - 2004;
-    }
-    if (self.job_runner) |runner| {
-        const progress = runner.pollProgress();
-        const can_pause = (progress.kind == .copy or progress.kind == .move) and
-            (progress.state == .running or progress.state == .paused);
-        if (can_pause and fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
-            return std.math.maxInt(usize) - 2003;
-        }
-    }
-    return std.math.maxInt(usize) - 2002;
-}
-
-pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
-    if (!self.fileOpsSidebarHit(x, y)) return false;
-    const runner = self.job_runner orelse return true;
-    const progress = runner.pollProgress();
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        runner.cancel();
-    } else if ((progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused) and
-        fileOpsRectContains(fileOpsPauseRect(area), x, y))
-    {
-        if (progress.state == .paused) {
-            runner.resumeJob();
-        } else if (progress.state == .running) {
-            runner.pause();
-        }
-    } else {
-        self.navigate(runner.dest_dir);
-        self.focus = .file_view;
-    }
-    self.invalidate();
-    return true;
-}
-
-pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
-    const runner = self.job_runner orelse return;
-    const progress = runner.pollProgress();
-    if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;
-    const area = fileOpsBox(self);
-    if (area.w < 120) return;
-
-    @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
-
-    const palette = ui_theme.shellPalette();
-    const fraction: ?f64 = if (progress.total_bytes_known and progress.total_bytes > 0)
-        @min(1.0, @as(f64, @floatFromInt(progress.transferred_bytes)) / @as(f64, @floatFromInt(progress.total_bytes)))
-    else
-        null;
-
-    @import("app_draw.zig").drawTransferProgressRow(
-        cr,
-        area,
-        if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
-        fraction,
-        ui_theme.global.sidebarForeground(),
-        palette.accent,
-        shell_ui.statusSize(),
-    );
-
-    const can_pause = (progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused);
-    if (can_pause) {
-        const rect = fileOpsPauseRect(area);
-        sidebar_controls.render(
-            cr,
-            rect,
-            if (progress.state == .paused) .play else .pause,
-            fileOpsRectContains(rect, self.mouse_x, self.mouse_y),
-        );
-    }
-    const cancel_rect = fileOpsCancelRect(area);
-    sidebar_controls.render(
-        cr,
-        cancel_rect,
-        .close,
-        fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
-    );
-}
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
     const bar = self.sidebarScrollbar() orelse return;
     shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.sidebar_scroll_appearance, self.scrollbar_width, ui_theme.shellPalette()));
-}
-pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
-    if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
-
-    const title, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
-        .copy => .{ tr("Copying files"), tr("Copying") },
-        .move => .{ tr("Moving files"), tr("Moving") },
-        .extract => .{ tr("Extracting files"), tr("Extracting") },
-        .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
-    } else .{ tr("File transfer"), tr("In progress") };
-    const status = switch (self.job_state) {
-        .running => running_status,
-        .paused => tr("Paused"),
-        .waiting_conflict => tr("Waiting for confirmation"),
-        .finished => tr("Complete"),
-        .idle => tr("Ready"),
-    };
-
-    var speed_buf: [96]u8 = undefined;
-    var speed_size_buf: [32]u8 = undefined;
-    var bytes_size_buf: [32]u8 = undefined;
-    const speed = i18n.fmt(&speed_buf, tr("{rate}/s"), .{
-        .rate = @import("app_draw.zig").formatSize(
-            @intCast(@min(self.job_bytes_per_second, @as(u64, std.math.maxInt(i64)))),
-            &speed_size_buf,
-        ),
-    }) catch "";
-    const transferred = @import("app_draw.zig").formatSize(
-        @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
-        &bytes_size_buf,
-    );
-    const details = [_]transferTip.Detail{
-        .{ .label = tr("Status"), .value = status },
-        .{ .label = tr("Speed"), .value = speed },
-        .{ .label = tr("Transferred"), .value = transferred },
-    };
-    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, title, &details);
 }

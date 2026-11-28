@@ -23,6 +23,7 @@ pub fn create(display: *wl.Display, setup: Setup, primary: bool, paths: []const 
     errdefer a.destroy(self);
     self.* = .{ .display = display, .app = try app_mod.App.init(setup.io) };
     self.app.environ = setup.environ;
+    self.app.loadPreferences();
     self.app.join();
     if (primary) self.app.openDrafts(setup.environ);
     for (paths) |path| self.app.open(path);

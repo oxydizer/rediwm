@@ -278,7 +278,8 @@ def run():
                 put("late.txt", home / "late.txt", "twelve chars")
                 mode = files.stat().st_mode
                 geometry = next(iter(windows()))
-                row = (geometry["x"] + 75, geometry["y"] + 221)  # sidebar: Home, Trash, Recent
+                # sidebar: the PLACES card header (32 px), then Home, Trash, Recent
+                row = (geometry["x"] + 75, geometry["y"] + 211)
 
                 def trash_properties():
                     ipc.click_at(*row, 0x111)
@@ -297,7 +298,7 @@ def run():
                 trash_properties()
                 key(ESC)
                 time.sleep(.3)
-                assert windows()[0]["title"] == "plain — RediWM Files", "Escape in Trash Properties navigated away"
+                assert windows()[0]["title"] == "plain — RediWM Files", "Escape in Trash Properties navigated away: " + windows()[0]["title"]
                 trash_properties()
                 key(TAB)
                 key(ENTER)  # Open

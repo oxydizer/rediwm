@@ -1,4 +1,4 @@
-//! Files Git and Transfers view tests.
+//! Files Git and Transfers view tests, and per-folder views.
 
 const std = @import("std");
 const App = @import("app.zig").App;
@@ -89,48 +89,6 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     try std.testing.expect(app.editor_path == null);
 }
 
-test "Transfers uses list geometry and isolates file actions while preserving the folder view" {
-    var app = App{
-        .allocator = std.testing.allocator,
-        .io = undefined,
-        .environ = undefined,
-        .theme_cfg = undefined,
-        .worker = undefined,
-        .history = .{ .allocator = std.testing.allocator, .current = "/" },
-        .home_dir = "/",
-        .items_arena = undefined,
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
-    };
-    // These records are only counted. File actions must never read them
-    // while the transfer pane is active.
-    var files: [32]ViewItem = undefined;
-    var transfers: [32]@import("torrents.zig").Transfer = undefined;
-    app.items = .fromOwnedSlice(&files);
-    app.torrents.snapshot = .{ .arena = undefined, .value = .{ .transfers = &transfers } };
-    app.list_view = false;
-    app.transfer_view = .{ .active = true, .folder_scroll = 77, .folder_search_visible = true };
-    try std.testing.expectEqual(@as(i32, 1), app.columns());
-    try std.testing.expectEqual(@as(i32, 38), app.rowHeight());
-    try std.testing.expectEqualStrings("Status", app.columnLabels()[1]);
-    try std.testing.expect(app.scrollbarGeometry() != null);
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(260, 180));
-    try std.testing.expectEqual(@as(?[]const u8, null), app.dropDirectoryAt(260, 180));
-    app.handleKey(c.XKB_KEY_Delete, "");
-    app.ctrl = true;
-    app.handleKey(c.XKB_KEY_v, "v");
-    try std.testing.expect(!app.paste_requested);
-    try std.testing.expect(app.dialog == null);
-    app.ctrl = false;
-    app.transferPaneKey(c.XKB_KEY_End);
-    try std.testing.expectEqual(@as(?usize, 31), app.transfer_view.row);
-    try std.testing.expect(app.scroll_y > 0);
-    app.back();
-    try std.testing.expect(!app.transfer_view.active);
-    try std.testing.expect(!app.list_view);
-    try std.testing.expect(app.search_visible);
-    try std.testing.expectEqual(@as(i32, 77), app.scroll_y);
-}
-
 pub fn inlineTransferFixture() @import("torrents.zig").Transfer {
     return .{
         .id = "abc",
@@ -172,7 +130,6 @@ test "folder transfer rows match full paths, avoid duplicates and exclude stagin
         .history = .{ .allocator = allocator, .current = "/Downloads" },
         .home_dir = "/",
         .items_arena = undefined,
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
     };
     defer app.items.deinit(allocator);
     var transfers = [_]@import("torrents.zig").Transfer{inlineTransferFixture()};
@@ -191,9 +148,7 @@ test "folder transfer rows match full paths, avoid duplicates and exclude stagin
     app.openTrashConfirmDialog();
     try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
     try std.testing.expect(app.dialog == null);
-    app.activateItem(0);
-    try std.testing.expectEqual(@import("app_model.zig").DialogKind.transfers, app.dialog.?.kind);
-    app.closeDialog();
+    // Activating it opens its files as a folder (app_torrent_browse_tests).
 
     app.items.items[0].transfer_stub = false;
     app.items.items[0].missing = false;
@@ -223,4 +178,44 @@ test "torrent ETA uses remaining selected bytes and is unknown while paused or s
     try std.testing.expectEqual(@as(?i64, 0), eta(transfer));
     transfer.pending = true;
     try std.testing.expect(eta(transfer) == null);
+}
+
+test "each folder keeps its own view and untouched folders follow the defaults" {
+    const folder_views = @import("folder_views.zig");
+    var app = try testApp();
+    defer app.deinit();
+    var store: folder_views.Store = undefined;
+    try store.start(std.testing.io, null);
+    defer store.deinit();
+    app.folder_views = &store;
+
+    app.applyFolderView();
+    app.list_view = true;
+    app.recordFolderView();
+    try std.testing.expectEqual(folder_views.View{ .list = true }, store.get("/tmp"));
+
+    try app.history.navigate("/tmp/a");
+    app.applyFolderView();
+    try std.testing.expect(!app.list_view and app.folders_first);
+    app.setSort(.size);
+    app.folders_first = false;
+    app.recordFolderView();
+
+    try app.history.navigate("/tmp");
+    app.applyFolderView();
+    try std.testing.expect(app.list_view and app.folders_first);
+    try std.testing.expectEqual(@import("app_model.zig").Sort.name, app.sort_mode);
+
+    // A new default reaches folders that never chose; a choice equal to the
+    // default is no longer kept, so the folder follows the default again.
+    app.default_folders_first = false;
+    app.applyFolderView();
+    try std.testing.expect(!app.folders_first);
+    try app.history.navigate("/tmp/a");
+    app.applyFolderView();
+    try std.testing.expect(!app.folders_first);
+    try std.testing.expectEqual(@import("app_model.zig").Sort.size, app.sort_mode);
+    app.recordFolderView();
+    try std.testing.expectEqual(folder_views.View{ .sort = 2 }, store.get("/tmp/a"));
+    try std.testing.expect(!app.folderViewIsDefault());
 }

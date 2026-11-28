@@ -10,7 +10,6 @@ fn printUsage() void {
         \\
         \\Options:
         \\  -h, --help    Show this help message and exit
-        \\  --transfers   Show background downloads
         \\  --torrent URI Open a torrent file or magnet link
         \\  --open        Choose a file (JSON result on stdout)
         \\  --save        Choose a save destination
@@ -86,7 +85,6 @@ pub fn main(init: std.process.Init) void {
     const raw_args = init.minimal.args.vector;
     var target_arg: ?[]const u8 = null;
     var torrent_source: ?[]const u8 = null;
-    var transfers = false;
     var chooser: ?@import("files/chooser.zig").Options = null;
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
@@ -98,8 +96,6 @@ pub fn main(init: std.process.Init) void {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             printUsage();
             return;
-        } else if (std.mem.eql(u8, arg, "--transfers")) {
-            transfers = true;
         } else if (std.mem.eql(u8, arg, "--torrent") and i + 1 < raw_args.len) {
             i += 1;
             torrent_source = std.mem.span(raw_args[i]);
@@ -153,7 +149,7 @@ pub fn main(init: std.process.Init) void {
     };
     defer allocator.free(target.path);
 
-    main_mod.run(init, target.directory, if (chooser == null) target.selected else null, chooser, torrent_source, transfers) catch |err| {
+    main_mod.run(init, target.directory, if (chooser == null) target.selected else null, chooser, torrent_source) catch |err| {
         std.log.err("rediwm-files: {}", .{err});
         std.process.exit(1);
     };

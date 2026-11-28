@@ -1,5 +1,4 @@
-//! File operations that differ between systems. Linux has `renameat2`;
-//! FreeBSD has no rename that refuses to replace.
+//! File operations that differ between systems.
 const std = @import("std");
 const builtin = @import("builtin");
 const linux = std.os.linux;
@@ -143,6 +142,40 @@ fn classify(err: std.posix.E) RenameError {
     };
 }
 
+const RenameAt = *const fn (c_int, [*:0]const u8, c_int, [*:0]const u8, c_uint) callconv(.c) c_int;
+
+fn freeBsdRenameAt() ?RenameAt {
+    // Older FreeBSD libc versions have no renameat2 symbol.
+    const c = std.c;
+    const handle = c.dlopen(null, .{ .LAZY = true }) orelse return null;
+    defer _ = c.dlclose(handle);
+    return @ptrCast(c.dlsym(handle, "renameat2") orelse return null);
+}
+
+/// Whether the OS exposes an atomic no-replace rename. Filesystems can
+/// still reject the operation.
+pub fn hasAtomicRenameNoReplace() bool {
+    return switch (builtin.os.tag) {
+        .linux => true,
+        .freebsd => freeBsdRenameAt() != null,
+        else => unreachable,
+    };
+}
+
+/// A no-replace rename with no check-then-rename or link/unlink fallback.
+pub fn renameNoReplaceAtomic(from: [*:0]const u8, to: [*:0]const u8) RenameError!void {
+    switch (builtin.os.tag) {
+        .linux => return renameNoReplace(from, to),
+        .freebsd => {
+            const rename_at = freeBsdRenameAt() orelse return error.Failed;
+            const rename_noreplace = 0x0001;
+            if (rename_at(std.c.AT.FDCWD, from, std.c.AT.FDCWD, to, rename_noreplace) != 0)
+                return classify(std.posix.errno(@as(c_int, -1)));
+        },
+        else => unreachable,
+    }
+}
+
 /// Renames `from` to `to` unless `to` exists, in which case nothing changes
 /// and the error is `PathAlreadyExists`. Atomic on Linux. FreeBSD links the
 /// new name and then removes the old one, so a failure part way leaves the
@@ -233,4 +266,18 @@ test "rename without replacing moves a file, and refuses an existing target" {
     try tmp.dir.access(t.io, "e", .{});
     try tmp.dir.createDir(t.io, "d", .default_dir);
     try t.expectError(error.PathAlreadyExists, renameNoReplace(d, e));
+}
+
+/// Writes everything cached for the filesystem that holds `fd` to its disk,
+/// and waits for it. Linux syncs that filesystem alone; FreeBSD has no such
+/// call and syncs every filesystem. False when the disk reported an error.
+pub fn syncFilesystem(fd: c_int) bool {
+    switch (builtin.os.tag) {
+        .linux => return linux.errno(linux.syncfs(fd)) == .SUCCESS,
+        .freebsd => {
+            std.c.sync();
+            return true;
+        },
+        else => unreachable,
+    }
 }

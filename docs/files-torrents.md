@@ -3,32 +3,49 @@
 Files opens `.torrent` files directly. Magnet handlers use the installed
 `rediwm-transfers.desktop` entry, which invokes `rediwm-files --torrent URI`.
 It advertises support without replacing an existing default application.
-`rediwm-files --transfers` opens the transfer list. The Transfers section below
-removable devices opens the same interface and shows aggregate activity.
-Transfers appears in the main Files pane using the file-list rows and column
-headers. Add torrent, Pause all and Stop seeding appear in the toolbar beside
-the view icons. Open a row for file selection and per-transfer controls; Back
-or a sidebar place returns to browsing folders.
+Downloads, like copies, are followed in the shell's Transfers panel; Files has
+no list of its own.
 
 Folder listings also show transfer status beside the name, a circular progress
 indicator and a play/pause button. Hover the circle for percentage, download and
 upload speeds, connected peers, seeds, known peers and ETA. A stalled or paused
 download has no ETA until data is arriving again. Space toggles the focused
-transfer; clicking its circle opens details. A visible `.torrent` source gets
+transfer; clicking its circle opens its files. A visible `.torrent` source gets
 these controls too. Before publication, the destination folder shows a transfer
-entry for the staged download; it opens transfer details and is excluded from
+entry for the staged download; it opens as a folder and is excluded from
 copy, rename, trash and drag operations. Completion replaces it with the real
 published folder. No files are renamed to encode progress.
 
-Choose an existing destination folder, then choose files and start. Magnet
-links fetch metadata first; they do not download payload until confirmed.
-The first version has paged file selection, pause/resume, removal that keeps
-files, and two upload limits (128 KiB/s or 1 MiB/s). Seeding can stop at download
-completion, ratio 1 or ratio 2. The session upload ceiling is 1 MiB/s.
+## A torrent is a folder
 
-Downloads and seeding continue after the last Files window closes. The tray
-indicator opens Transfers; its menu offers Pause all and Stop seeding. It is
-hidden when all transfers are stopped. A completion notification is sent when
+Opening a `.torrent` file enters it like a folder or an archive: its files
+are ghosts, each with a checkbox, and browsing starts inside the folder the
+torrent keeps its files in. Looking adds nothing (the helper reads the file,
+`inspect`). Ticking means downloading: the first tick adds the torrent and
+downloads what is ticked into the folder the `.torrent` file is in. A folder's
+checkbox ticks or unticks everything in it and shows a dash while only part of
+it is ticked. Space ticks the selected rows (or unticks them, when all are
+ticked); clicking a row selects it without ticking it. An unticked file is
+faint and shows its size; a ticked one fills with its progress; a finished
+one is a real file that opens. Unticking keeps what has arrived, and ticking
+more files of a finished download fetches them into its published folder.
+The status bar counts the ticks and the bytes they hold.
+
+New → New Torrent… takes a pasted magnet link and downloads into the folder
+shown (a pasted `.torrent` path opens that file instead). A magnet opened from
+elsewhere asks for its destination folder. Either way the folder then shows the
+download as a ghost folder; it reads "Fetching file list…" until the metadata arrives, then
+its files can be ticked the same way. The download's row in its destination
+folder, its circle and the shell panel's Choose files… all open the same
+folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit.
+The session upload ceiling is 1 MiB/s. Peers come from trackers, the DHT and local peer
+discovery; UPnP and NAT-PMP stay off, so no router ports are opened.
+
+Downloads and seeding continue after the last Files window closes: Files stays
+up without a window while the helper downloads or seeds, mirroring each
+torrent as a job, so the shell's Transfers panel shows them (with their speed,
+share ratio and Stop seeding) beside copies and extractions. The helper has no
+tray icon of its own. A completion notification is sent when
 a notification service is already running. Transfers recover when Files next
 starts after logout or a helper crash; there is no new login autostart service.
 
@@ -69,15 +86,14 @@ pauses the transfer and preserves its partial data; rename the conflicting
 folder and Resume to retry. This staging scheme keeps incomplete files out of
 the normal folder view and thumbnail pipeline.
 
-Remove always keeps payloads, including partials. Use Show in folder to locate
-them before removing a transfer. Moving or editing files outside the transfer
+Remove (cancel in the panel) always keeps payloads, including partials. Adding the same torrent to the same folder again takes up its partial data. Moving or editing files outside the transfer
 engine can interrupt seeding; pause/remove the transfer before reorganizing
 its data. This version does not include tracker editing, torrent creation,
-streaming previews, automatic move tracking or individual file-row progress.
+streaming previews or automatic move tracking.
 
 ## Validation
 
-`zig build test-files-torrents` runs real engine and headless UI/tray tests
+`zig build test-files-torrents` runs real engine and headless UI tests
 without contacting public peers, trackers or the user's session bus. Set
 `REDIWM_TEST_BIN_DIR` to an alternate build's `bin` directory to exercise it. The
 fixture network shim is never installed or linked into production binaries.

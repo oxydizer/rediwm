@@ -7,6 +7,8 @@ const ui = @import("ui").cairo;
 const theme = @import("ui").theme;
 const field = @import("ui").widgets.field;
 const button = @import("ui").widgets.button;
+const layout = @import("layout.zig");
+const ui_text = @import("ui").text;
 const Rect = @import("ui").context_menu.Rect;
 const Editor = @import("../files/editor.zig").Editor;
 const App = @import("app.zig").App;
@@ -42,21 +44,133 @@ fn visible(self: *App, control: Control) bool {
     };
 }
 
-pub fn searchBox(self: *App, control: Control) Rect {
-    const w: f64 = @floatFromInt(self.w);
-    return switch (control) {
-        .query => .{ .x = 12, .y = 43, .w = w - 282, .h = 32 },
-        .next => .{ .x = w - 262, .y = 43, .w = 86, .h = 32 },
-        .toggle => .{ .x = w - 170, .y = 43, .w = 116, .h = 32 },
-        .close => .{ .x = w - 46, .y = 43, .w = 34, .h = 32 },
-        .replacement => .{ .x = 12, .y = 83, .w = w - 282, .h = 32 },
-        .replace => .{ .x = w - 262, .y = 83, .w = 116, .h = 32 },
-        .replace_all => .{ .x = w - 140, .y = 83, .w = 128, .h = 32 },
+/// Resolve the editor's complete client geometry from shared widget metrics.
+/// Text widths use the same Manrope face, button size and output scale as the
+/// shared button painter.
+pub fn editorLayout(self: *App) layout.Layout {
+    const palette = theme.shellPalette();
+    const scale: f32 = @floatFromInt(@max(self.scale, 1));
+    var gutter_width: f64 = 0;
+    if (self.line_numbers and self.tabs.items.len > 0) {
+        const doc = self.document();
+        if (self.line_count_revision != doc.revision) {
+            self.line_count = doc.linesBefore(doc.text.items.len) + 1;
+            self.line_count_revision = doc.revision;
+        }
+        var digits_buf: [32]u8 = undefined;
+        const digits = std.fmt.bufPrint(&digits_buf, "{d}", .{self.line_count}) catch "9999";
+        const reserved_digits = @max(4, digits.len);
+        var sample: [32]u8 = @splat('9');
+        const measured = ui_text.measureWidthF(
+            sample[0..reserved_digits],
+            .mono,
+            ui.textSize(),
+            scale,
+        ) catch 0;
+        gutter_width = @as(f64, @floatCast(measured)) + 8;
+    }
+    const input: layout.Input = .{
+        .width = @floatFromInt(self.w),
+        .height = @floatFromInt(self.h),
+        .editor_owned_tabs = !self.strip_in_titlebar,
+        .search = if (!self.find_open) .closed else if (self.replace_open) .replace else .find,
     };
+    const field_height = @as(f64, @floatCast(field.metrics(.md, theme.global).height));
+
+    // Viewport queries are frequent while the search bar is closed. Its
+    // button dimensions are irrelevant in that state, so avoid shaping labels.
+    if (input.search == .closed) {
+        return layout.Layout.resolve(input, .{
+            .field = .{ .w = 0, .h = field_height },
+            .next = .{ .w = 0, .h = 0 },
+            .toggle = .{ .w = 0, .h = 0 },
+            .close = .{ .w = 0, .h = 0 },
+            .replace = .{ .w = 0, .h = 0 },
+            .replace_all = .{ .w = 0, .h = 0 },
+            .gutter_width = gutter_width,
+        });
+    }
+
+    const next_options: button.Options = .{
+        .label = tr("Next"),
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const toggle_options: button.Options = .{
+        .label = tr("Replace"),
+        .leading_icon = .chevron_down,
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const close_options: button.Options = .{
+        .label = tr("Close"),
+        .icon = .close,
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const replace_options: button.Options = .{
+        .label = tr("Replace"),
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const replace_all_options: button.Options = .{
+        .label = tr("Replace All"),
+        .variant = .ghost,
+        .size = .sm,
+    };
+
+    const measureButton = struct {
+        fn run(options: button.Options, palette_value: @TypeOf(palette), output_scale: f32) layout.Size {
+            const label_width = ui_text.measureWidthF(
+                options.label,
+                .manrope,
+                palette_value.button_font_size,
+                output_scale,
+            ) catch 0;
+            const size = button.naturalSize(options, palette_value, label_width);
+            return .{
+                .w = @floatCast(size.w),
+                .h = @floatCast(size.h),
+            };
+        }
+    }.run;
+
+    return layout.Layout.resolve(input, .{
+        .field = .{
+            .w = 0,
+            .h = field_height,
+        },
+        .next = measureButton(next_options, palette, scale),
+        .toggle = measureButton(toggle_options, palette, scale),
+        .close = measureButton(close_options, palette, scale),
+        .replace = measureButton(replace_options, palette, scale),
+        .replace_all = measureButton(replace_all_options, palette, scale),
+        .gutter_width = gutter_width,
+    });
+}
+
+pub fn searchBoxInLayout(resolved: layout.Layout, control: Control) Rect {
+    const box = switch (control) {
+        .query => resolved.query,
+        .next => resolved.next,
+        .toggle => resolved.toggle,
+        .close => resolved.close,
+        .replacement => resolved.replacement,
+        .replace => resolved.replace,
+        .replace_all => resolved.replace_all,
+    };
+    return .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h };
+}
+
+pub fn searchBox(self: *App, control: Control) Rect {
+    return searchBoxInLayout(self.editorLayout(), control);
 }
 
 pub fn searchHit(self: *App, x: f64, y: f64) ?Control {
-    for (order) |control| if (visible(self, control) and self.searchBox(control).contains(x, y)) return control;
+    const resolved = self.editorLayout();
+    for (order) |control| {
+        if (visible(self, control) and searchBoxInLayout(resolved, control).contains(x, y)) return control;
+    }
     return null;
 }
 
@@ -162,8 +276,8 @@ pub fn searchKey(self: *App, sym: u32, utf8: []const u8) void {
     self.dirty = true;
 }
 
-fn textBox(self: *App, control: Control) field.Rect {
-    const box = self.searchBox(control);
+fn textBox(resolved: layout.Layout, control: Control) field.Rect {
+    const box = searchBoxInLayout(resolved, control);
     return field.arrange(.{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, .{}, theme.global).text;
 }
 
@@ -176,12 +290,23 @@ fn scrollField(cr: *c.cairo_t, editor: *Editor, width: f64) f64 {
 
 pub fn searchCaret(self: *App, cr: *c.cairo_t) @import("caret.zig").Rect {
     const editor = self.searchEditor() orelse return .{};
-    const box = textBox(self, self.search_focus);
-    return .{ .x = @floatCast(box.x + scrollField(cr, editor, box.w)), .y = box.y + 6, .w = 1, .h = @floatCast(ui.textSize() + 3) };
+    const resolved = self.editorLayout();
+    const box = textBox(resolved, self.search_focus);
+    const metrics = ui.fontMetrics(cr, ui.textSize());
+    const line_height = metrics.ascent + metrics.descent;
+    const baseline = @as(f64, @floatCast(box.y)) +
+        (@as(f64, @floatCast(box.h)) - line_height) / 2 +
+        metrics.ascent;
+    return .{
+        .x = @floatCast(@as(f64, @floatCast(box.x)) + scrollField(cr, editor, box.w)),
+        .y = @floatCast(baseline - metrics.ascent),
+        .w = 1,
+        .h = @floatCast(line_height),
+    };
 }
 
-fn paintField(self: *App, cr: *c.cairo_t, control: Control, editor: *Editor, placeholder: []const u8) void {
-    const box = self.searchBox(control);
+fn paintField(self: *App, cr: *c.cairo_t, resolved: layout.Layout, control: Control, editor: *Editor, placeholder: []const u8) void {
+    const box = searchBoxInLayout(resolved, control);
     const focused = self.search_focus == control;
 
     // Paint the shared proximity glow beneath the field frame, preserving
@@ -201,8 +326,14 @@ fn paintField(self: *App, cr: *c.cairo_t, control: Control, editor: *Editor, pla
         _ = field.paintFrame(&layer.renderer, layer.local(), .{}, .{ .focused = focused });
         layer.finish();
     }
-    const text = textBox(self, control);
+    const text = textBox(resolved, control);
     _ = scrollField(cr, editor, text.w);
+    const metrics = ui.fontMetrics(cr, ui.textSize());
+    const line_height = metrics.ascent + metrics.descent;
+    const baseline = @as(f64, @floatCast(text.y)) +
+        (@as(f64, @floatCast(text.h)) - line_height) / 2 +
+        metrics.ascent;
+    const line_top = baseline - metrics.ascent;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, text.x, text.y, text.w, text.h);
@@ -213,21 +344,22 @@ fn paintField(self: *App, cr: *c.cairo_t, control: Control, editor: *Editor, pla
     if (selected[0] != selected[1]) {
         const x = origin + ui.measureText(cr, bytes[0..selected[0]], ui.textSize(), false);
         const width = ui.measureText(cr, bytes[selected[0]..selected[1]], ui.textSize(), false);
-        fill(cr, x, text.y + 3, width, text.h - 6, theme.global.app_item_selected);
+        fill(cr, x, line_top, width, line_height, theme.global.app_item_selected);
     }
     var ink = theme.global.window_fg;
     if (bytes.len == 0) ink[3] *= 0.5;
     ui.setSource(cr, ink);
-    ui.drawText(cr, if (bytes.len == 0) placeholder else bytes, origin, text.y + 21, ui.textSize(), false);
+    ui.drawText(cr, if (bytes.len == 0) placeholder else bytes, origin, baseline, ui.textSize(), false);
     if (focused) self.paintCaret(cr);
 }
 
 pub fn paintSearch(self: *App, cr: *c.cairo_t) void {
-    paintField(self, cr, .query, &self.query, tr("Find…"));
-    if (self.replace_open) paintField(self, cr, .replacement, &self.replacement, tr("Replace with…"));
+    const resolved = self.editorLayout();
+    paintField(self, cr, resolved, .query, &self.query, tr("Find…"));
+    if (self.replace_open) paintField(self, cr, resolved, .replacement, &self.replacement, tr("Replace with…"));
     for (order) |control| {
         if (!visible(self, control) or control == .query or control == .replacement) continue;
-        const box = self.searchBox(control);
+        const box = searchBoxInLayout(resolved, control);
         var layer = ui.Layer.begin(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }) orelse continue;
         const disabled = (control == .next or control == .replace or control == .replace_all) and (self.query.text.items.len == 0 or (control != .next and self.document().locked));
         layer.renderer.palette = theme.shellPalette();

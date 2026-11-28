@@ -1,6 +1,7 @@
 //! Drag and drop: data offers, drops into folders or the terminal, and dragging files out.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const wl = @import("wayland").client.wl;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
@@ -48,23 +49,49 @@ pub fn dataEvent(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Client) v
             ev.id.setListener(*Offer, offerEvent, offer);
         },
         .enter => |ev| {
+            // Every window's data device hears every drag that enters any
+            // window of the connection; only the one under the drag takes it.
+            // The others keep their copy of the offer until it is inert:
+            // wlroots takes a version 3 drag offer destroyed before the drop
+            // finishes as a refusal and cancels the whole drag, so discarding
+            // it here ended every drag while two windows were open. After the
+            // leave (or once the next drag enters) the compositor has let go
+            // of it.
+            if (ev.surface != self.surface) {
+                if (self.foreign_offer) |old| self.discardOffer(old);
+                self.foreign_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
+                return;
+            }
+            self.drag_here = true;
             if (self.drag_offer) |old| self.discardOffer(old);
             self.drag_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
             self.drag_enter_serial = ev.serial;
             // Offers are released on leave instead of retaining every re-entry.
             self.dragOver(ev.x.toDouble(), ev.y.toDouble(), true);
         },
-        .motion => |ev| self.dragOver(ev.x.toDouble(), ev.y.toDouble(), false),
+        .motion => |ev| if (self.drag_here) self.dragOver(ev.x.toDouble(), ev.y.toDouble(), false),
         .leave => {
+            if (self.foreign_offer) |offer| self.discardOffer(offer);
+            self.foreign_offer = null;
+            if (!self.drag_here) return;
+            self.drag_here = false;
             self.app.dropLeave();
             if (self.drag_offer) |offer| self.discardOffer(offer);
             self.drag_offer = null;
         },
-        .drop => self.dragDropped(),
+        .drop => if (self.drag_here) {
+            self.drag_here = false;
+            self.dragDropped();
+        },
         .selection => |ev| {
             self.cancelReceive();
             if (self.selection_offer) |old| self.discardOffer(old);
             self.selection_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
+            const files = if (self.selection_offer) |offer| offer.uri or offer.gnome else false;
+            if (self.app.clipboard_offer_files != files) {
+                self.app.clipboard_offer_files = files;
+                if (self.app.menu == .file) self.app.invalidate();
+            }
         },
     }
 }
@@ -142,14 +169,6 @@ pub fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []co
     offer.proxy.receive("text/uri-list", fds[1]);
 }
 
-pub fn canonicalPath(path: []const u8) ![]u8 {
-    const terminated = try a.dupeSentinel(u8, path, 0);
-    defer a.free(terminated);
-    var buffer: [4096]u8 = undefined;
-    const resolved = c.realpath(terminated, &buffer) orelse return error.InvalidPath;
-    return a.dupe(u8, std.mem.span(resolved));
-}
-
 pub fn receiveDrop(self: *Client) void {
     const receive = if (self.drop_receiving) |*r| r else return;
     if (app_mod.nowMs() - receive.started > transfer.timeout_ms) {
@@ -178,28 +197,18 @@ pub fn receiveDrop(self: *Client) void {
     } else if (self.drop_slot) |slot| {
         self.app.pinDropped(slot, decoded.paths);
     } else {
-        const destination = canonicalPath(receive.directory) catch {
-            self.app.setStatusNotice(@import("i18n").tr("The destination folder is unavailable"), true);
-            return;
-        };
-        defer a.free(destination);
-        var paths: std.ArrayList([]const u8) = .empty;
-        defer paths.deinit(a);
-        for (decoded.paths) |path| {
-            const resolved = canonicalPath(path) catch continue;
-            defer a.free(resolved);
-            if (@import("ops.zig").isDescendantOrSame(resolved, destination)) {
-                self.app.setStatusNotice(@import("i18n").tr("Cannot drop a folder into itself"), true);
-                return;
-            }
-            const parent = std.fs.path.dirname(path) orelse continue;
-            const resolved_parent = canonicalPath(parent) catch continue;
-            defer a.free(resolved_parent);
-            if (self.drop_move and std.mem.eql(u8, resolved_parent, destination)) continue;
-            paths.append(a, path) catch return;
+        // The service resolves the destination, each source and each
+        // source's folder; `app_requests` finishes the drop.
+        const count = decoded.paths.len;
+        const all = a.alloc([]const u8, 1 + 2 * count) catch return;
+        defer a.free(all);
+        all[0] = receive.directory;
+        for (decoded.paths, 0..) |path, i| {
+            all[1 + i] = path;
+            all[1 + count + i] = std.fs.path.dirname(path) orelse path;
         }
-        if (paths.items.len == 0) return;
-        _ = self.app.executeTransfer(if (self.drop_move) .move else .copy, paths.items, destination, false);
+        const owned = @import("app_requests.zig").dupeAll(a, all) catch return;
+        _ = @import("app_requests.zig").send(&self.app, .{ .canonical = .{ .paths = all } }, .{ .drop = .{ .paths = owned, .move = self.drop_move } });
     }
 }
 
@@ -224,24 +233,34 @@ pub fn clearDragIcon(self: *Client) void {
     self.drag_icon = null;
 }
 
-pub fn startFileDrag(self: *Client) !void {
-    const manager = self.data_manager orelse return;
-    const device = self.data_device orelse return;
-    if (self.drag_source != null) return;
-    var paths: std.ArrayList([]const u8) = .empty;
-    defer paths.deinit(a);
-    for (self.app.items.items) |item| {
-        if (item.selected and !item.missing) try paths.append(a, item.path);
-    }
-    if (paths.items.len == 0) return;
+fn startFileDragPaths(
+    self: *Client,
+    paths: []const []const u8,
+    staging_lease: ?clipboard_mod.StagingLease,
+    serial: u32,
+) !void {
+    var owned_lease = staging_lease;
+    errdefer if (owned_lease) |*lease| lease.deinit();
+    const manager = self.data_manager orelse return error.DataDeviceUnavailable;
+    const device = self.data_device orelse return error.DataDeviceUnavailable;
+    if (self.drag_source != null) return error.DragAlreadyActive;
+    if (paths.len == 0) return error.NoDragPaths;
+
     const source = try manager.createDataSource();
     errdefer source.destroy();
     const clip = try a.create(ClipboardSource);
     errdefer a.destroy(clip);
-    const uris = try clipboard_mod.encodeUriList(a, paths.items);
+    const uris = try clipboard_mod.encodeUriList(a, paths);
     errdefer a.free(uris);
     const gnome = try a.dupe(u8, "");
-    clip.* = .{ .client = self, .proxy = source, .uris = uris, .gnome = gnome };
+    clip.* = .{
+        .client = self,
+        .proxy = source,
+        .uris = uris,
+        .gnome = gnome,
+        .staging_lease = owned_lease,
+    };
+    owned_lease = null;
     source.setListener(*ClipboardSource, clipboardEvent, clip);
     source.offer("text/uri-list");
     source.offer("application/x-rediwm-file-transfer");
@@ -253,6 +272,64 @@ pub fn startFileDrag(self: *Client) !void {
     self.app.cancelDrag();
     // The icon is optional: an allocation failure must not lose the drag.
     self.drag_icon = DragIcon.create(self) catch null;
-    device.startDrag(source, self.surface, if (self.drag_icon) |icon| icon.surface else null, self.drag_serial);
+    device.startDrag(source, self.surface, if (self.drag_icon) |icon| icon.surface else null, serial);
     if (self.drag_icon) |icon| icon.surface.commit();
+}
+
+pub fn startFileDrag(self: *Client) !void {
+    if (self.drag_source != null) return;
+    if (self.data_manager == null or self.data_device == null) return;
+
+    if (self.app.history.archive_len > 0) {
+        if (self.pending_archive_drag != null) return;
+        self.pending_archive_drag = try self.app.startArchiveDragExport();
+        self.pending_archive_drag_serial = self.drag_serial;
+        self.app.cancelDrag();
+        return;
+    }
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(a);
+    for (self.app.items.items) |item| {
+        if (item.selected and !item.missing) try paths.append(a, item.path);
+    }
+    if (paths.items.len == 0) return;
+    try startFileDragPaths(self, paths.items, null, self.drag_serial);
+}
+
+pub fn cancelPendingArchiveDrag(self: *Client) void {
+    const tag = self.pending_archive_drag orelse return;
+    @import("app_archives.zig").abandon(&self.app, tag);
+    var pending_export = self.app.takeArchiveDragExport();
+    if (pending_export) |*drag_export| drag_export.deinit();
+}
+
+/// Starts the drag an archive export was preparing once its members are
+/// ready, as long as the button is still held over the window.
+pub fn stepArchiveDrag(self: *Client) void {
+    const tag = self.pending_archive_drag orelse return;
+    if (!self.left_button_held or !self.inside) {
+        self.cancelPendingArchiveDrag();
+        self.pending_archive_drag = null;
+        return;
+    }
+
+    var pending_export = self.app.takeArchiveDragExport();
+    if (pending_export) |*drag_export| {
+        self.pending_archive_drag = null;
+        const lease = drag_export.staging_lease;
+        drag_export.staging_lease = null;
+        startFileDragPaths(
+            self,
+            drag_export.paths.items,
+            lease,
+            self.pending_archive_drag_serial,
+        ) catch {
+            self.app.setStatusNotice("Could not start archive drag", true);
+        };
+        drag_export.deinit();
+        return;
+    }
+    // Failed or cancelled: nothing will come.
+    if (!@import("app_archives.zig").pending(&self.app, tag)) self.pending_archive_drag = null;
 }

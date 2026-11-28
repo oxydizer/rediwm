@@ -509,11 +509,6 @@ test "column surface owns list header hover and clears modal and departed target
     app.menu = .background;
     app.updateColumnSurface();
     try std.testing.expect(app.column_surface.hovered == null);
-
-    app.menu = null;
-    app.transfer_view.active = true;
-    app.updateColumnSurface();
-    try std.testing.expect(app.column_surface.hovered == null);
 }
 
 test "toolbar surface owns enabled hover targets and clears disabled and departed targets" {
@@ -604,7 +599,7 @@ test "dialog surface owns generic modal button hover targets" {
     }
 
     // A specialized dialog keeps its own interaction path.
-    app.dialog = .{ .kind = .transfers, .title = "Transfers" };
+    app.dialog = .{ .kind = .properties, .title = "Properties" };
     app.updateDialogSurface();
     try std.testing.expect(app.dialog_surface.hovered == null);
 

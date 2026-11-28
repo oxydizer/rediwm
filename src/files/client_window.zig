@@ -37,6 +37,16 @@ pub fn openEditor(self: *Client) void {
     } else self.app.launchEditor("");
 }
 
+/// A launch handed over by another process came with that launch's XDG
+/// activation token: presenting it lets the compositor focus the new window
+/// as if the launcher had opened it.
+pub fn activateWith(self: *Client, token: []const u8) void {
+    const activation = self.activation orelse return;
+    const z = a.dupeSentinel(u8, token, 0) catch return;
+    defer a.free(z);
+    activation.activate(z, self.surface);
+}
+
 pub fn previewReturned(self: *Client) void {
     const fd = self.app.preview_return_fd orelse return;
     const n = c.read(fd, self.preview_token[self.preview_token_len..].ptr, self.preview_token.len - self.preview_token_len);
@@ -193,7 +203,7 @@ pub fn xdgToplevelEvent(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Clie
             self.app.invalidate();
         },
         .close => {
-            self.app.terminalRequestClose();
+            self.app.requestClose();
         },
         .configure_bounds, .wm_capabilities => {},
     }

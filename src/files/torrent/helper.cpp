@@ -4,10 +4,11 @@
 // The parts: this file holds the engine, its alerts and the main loop;
 // helper_transfers.cpp adds, configures, persists and restores transfers;
 // helper_peers.cpp publishes snapshots to the Files windows that subscribe
-// and takes their commands; helper_tray.cpp is the StatusNotifierItem and
-// its menu. helper.hpp has what they share.
+// and takes their commands; helper_session.cpp places app scopes and opens
+// the session bus for notifications. helper.hpp has what they share. There
+// is no tray icon: Files mirrors downloads as jobs, and the shell's Transfers
+// panel shows them.
 #include "helper.hpp"
-#include "../../platform/self_exe.h"
 
 namespace helper {
 
@@ -34,8 +35,11 @@ void create_engine() {
                        lt::alert_category::port_mapping);
   settings.set_int(lt::settings_pack::connections_limit, 100);
   settings.set_int(lt::settings_pack::upload_rate_limit, 1024 * 1024);
-  settings.set_bool(lt::settings_pack::enable_dht, false);
-  settings.set_bool(lt::settings_pack::enable_lsd, false);
+  // Peers from the DHT and the local network from the start: a magnet
+  // without live trackers has no other way to its file list, and a torrent
+  // added before the DHT ran would wait for the next announce round.
+  settings.set_bool(lt::settings_pack::enable_dht, true);
+  settings.set_bool(lt::settings_pack::enable_lsd, true);
   settings.set_bool(lt::settings_pack::enable_upnp, false);
   settings.set_bool(lt::settings_pack::enable_natpmp, false);
   session = std::make_unique<lt::session>(settings);
@@ -90,6 +94,11 @@ static void sleep_engine() {
   for (auto &[id, t] : transfers) {
     t.cached = t.status();
     t.cached_info = t.info();
+    t.cached_progress.clear();
+    if (t.cached_info)
+      t.handle.file_progress(t.cached_progress,
+                             lt::torrent_handle::piece_granularity);
+    t.cached_priorities = t.handle.get_file_priorities();
     t.handle = {};
   }
   session->set_alert_notify({});
@@ -142,12 +151,6 @@ static gboolean tick(gpointer) {
   return G_SOURCE_CONTINUE;
 }
 void schedule() {
-  if (session && active()) {
-    lt::settings_pack settings;
-    settings.set_bool(lt::settings_pack::enable_dht, true);
-    settings.set_bool(lt::settings_pack::enable_lsd, true);
-    session->apply_settings(settings);
-  }
   if (!active() && saves.empty())
     sleep_engine();
   if (active() && !ticker)
@@ -218,9 +221,9 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
           t->handle.resume();
         persist(*t);
         request_save(*t);
-        if (bus)
+        if (auto session = session_bus())
           g_dbus_connection_call(
-              bus, "org.freedesktop.Notifications",
+              session, "org.freedesktop.Notifications",
               "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
               "Notify",
               g_variant_new(
@@ -308,10 +311,6 @@ int main(int argc, char **argv) {
     if (lstat(state_dir.c_str(), &state_stat) || !S_ISDIR(state_stat.st_mode) ||
         state_stat.st_uid != getuid() || (state_stat.st_mode & 077))
       throw std::runtime_error("Transfer state directory is not private");
-    char self[4096];
-    if (rediwm_self_exe(self, sizeof self) < 0)
-      throw std::runtime_error("Cannot locate the Files executable");
-    executable = (fs::path(self).parent_path() / "rediwm-files").string();
     // Scope policy is supplied by the Files launcher, which uses the same
     // native/nested rules as its other user-app launches.
     use_scopes = argc > 1 && !strcmp(argv[1], "--scope");

@@ -121,7 +121,7 @@ def run(scenario):
 
                 for key, pressed in ((29, True), (30, True), (30, False), (29, False)):
                     ipc.action('key', {"keycode": key, "pressed": pressed})
-                x, y = screen(box["x"] + 250, box["y"] + 158)
+                x, y = screen(box["x"] + 250, box["y"] + 128)
                 tx, ty = screen(900, 300)  # over the destination, well clear of Files
                 move(x, y)
                 button(True)

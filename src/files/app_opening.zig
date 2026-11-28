@@ -28,6 +28,7 @@ pub fn previewSelected(self: *App) void {
     if (selected >= self.items.items.len) return;
     const item = self.items.items[selected];
     if (!item.selected or item.missing or item.is_broken) return;
+    if (@import("app_torrent_browse.zig").active(self)) return;
     if (self.history.archive_len > 0) {
         if (item.is_dir) self.navigate(item.path) else self.openArchiveMember(item.path, true);
         return;
@@ -38,7 +39,7 @@ pub fn previewSelected(self: *App) void {
     }
     if (item.is_dir) return;
     if (isPdf(item.path)) {
-        self.openFile(item.path);
+        _ = self.openFile(item.path);
         return;
     }
     if (!formats.candidate(item.path)) {
@@ -125,34 +126,34 @@ pub fn isPdf(path: []const u8) bool {
     return std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".pdf");
 }
 
-pub fn openFile(self: *App, path: []const u8) void {
-    if (self.chooser != null) return;
+pub fn openFile(self: *App, path: []const u8) bool {
+    if (self.chooser != null) return false;
     if (@import("app_torrents.zig").enabled and std.ascii.endsWithIgnoreCase(path, ".torrent")) {
         self.torrentSource(path);
-        return;
+        return true;
     }
     if (std.ascii.endsWithIgnoreCase(path, ".rediwm-theme")) {
         self.worker.installTheme(path);
         self.setStatusNotice(tr("Installing theme…"), false);
-        return;
+        return true;
     }
     if (self.playsBuiltin(path)) {
         if (self.playAudio(path)) {
             self.worker.recordOpened(path);
-            return;
+            return true;
         }
         self.setStatusNotice(tr("Could not play the file"), true);
-        return;
+        return false;
     }
     const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
     if (!pdf) {
         @import("associations.zig").launchDefault(path) catch |err| {
             std.log.warn("failed to open '{s}': {}", .{ path, err });
             self.setStatusNotice(tr("Could not open file"), true);
-            return;
+            return false;
         };
         self.worker.recordOpened(path);
-        return;
+        return true;
     }
     var sibling_buf: [platform.exe.max_path]u8 = undefined;
     const executable = platform.exe.siblingOrName(&sibling_buf, "rediwm-pdf");
@@ -161,11 +162,16 @@ pub fn openFile(self: *App, path: []const u8) void {
     }) catch |err| {
         std.log.warn("failed to open '{s}': {}", .{ path, err });
         self.setStatusNotice(tr("Could not open file"), true);
-        return;
+        return false;
     };
 
+    self.children.add(self.allocator, child.id.?) catch {
+        child.kill(self.io);
+        self.setStatusNotice(tr("Could not open file"), true);
+        return false;
+    };
     self.worker.recordOpened(path);
-    self.children.add(self.allocator, child.id.?) catch child.kill(self.io);
+    return true;
 }
 
 pub fn browseArchive(self: *App, path: []const u8) void {
@@ -176,37 +182,28 @@ pub fn browseArchive(self: *App, path: []const u8) void {
 }
 
 pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
-    const runner = self.job_runner orelse return;
-    runner.startArchive(path, destination, null) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not start extraction"), true);
-        return;
-    };
-    self.job_was_running = true;
-    self.job_cut_revision = null;
-    self.invalidate();
+    _ = @import("app_archives.zig").startExtraction(self, path, destination, &.{});
 }
 
 pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
-    const len = self.history.archive_len;
-    if (len == 0 or path.len <= len) return;
-    const runner = self.job_runner orelse return;
-    runner.startArchive(self.history.current[0..len], "/tmp", path[len + 1 ..]) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not open archive member"), true);
-        return;
-    };
-    self.archive_preview = preview;
-    self.archive_open_navigation = self.navigation_count;
-    self.job_was_running = true;
-    self.job_cut_revision = null;
-    self.invalidate();
+    @import("app_archives.zig").openMember(self, path, preview);
 }
 
-pub fn openExtracted(self: *App, path: []const u8, preview: bool) void {
+pub fn openExtracted(self: *App, path: []const u8, preview: bool) bool {
     if (preview and image_formats.candidate(path)) {
-        self.previewExtracted(path) catch self.setStatusNotice(tr("Could not open image viewer"), true);
+        self.previewExtracted(path) catch {
+            self.setStatusNotice(tr("Could not open image viewer"), true);
+            return false;
+        };
+        return true;
     } else if (preview and @import("../editor/formats.zig").candidate(path)) {
-        if (self.editor_path == null) self.editor_path = self.allocator.dupeSentinel(u8, path, 0) catch null;
-    } else if (!preview or isPdf(path)) self.openFile(path);
+        if (self.editor_path != null) return false;
+        self.editor_path = self.allocator.dupeSentinel(u8, path, 0) catch return false;
+        return true;
+    } else if (!preview or isPdf(path)) {
+        return self.openFile(path);
+    }
+    return false;
 }
 
 pub fn previewExtracted(self: *App, path: []const u8) !void {
@@ -223,6 +220,8 @@ pub fn previewExtracted(self: *App, path: []const u8) !void {
 pub fn closeExtractPicker(self: *App) void {
     if (self.extract_picker_fd) |fd| _ = c.close(fd);
     if (self.extract_picker_source) |path| self.allocator.free(path);
+    for (self.extract_picker_members.items) |path| self.allocator.free(path);
+    self.extract_picker_members.clearRetainingCapacity();
     self.extract_picker_fd = null;
     self.extract_picker_source = null;
     self.extract_picker_bytes.clearRetainingCapacity();
@@ -230,7 +229,37 @@ pub fn closeExtractPicker(self: *App) void {
 
 pub fn chooseExtractionFolder(self: *App) void {
     if (self.extract_picker_fd != null) return;
-    const path = self.selectedArchive() orelse return;
+    const archive_members = self.history.archive_len > 0;
+    const path = if (archive_members) blk: {
+        if (!self.hasSelectedArchiveMembers()) return;
+        break :blk self.history.current[0..self.history.archive_len];
+    } else self.selectedArchive() orelse return;
+
+    var members: std.ArrayList([]const u8) = .empty;
+    var members_transferred = false;
+    defer if (!members_transferred) {
+        for (members.items) |member| self.allocator.free(member);
+        members.deinit(self.allocator);
+    };
+
+    if (archive_members) {
+        for (self.items.items) |item| {
+            if (!item.selected or item.transfer_ghost) continue;
+            const member = self.allocator.dupe(
+                u8,
+                item.path[self.history.archive_len + 1 ..],
+            ) catch {
+                self.setStatusNotice(tr("Could not prepare archive members"), true);
+                return;
+            };
+            members.append(self.allocator, member) catch {
+                self.allocator.free(member);
+                self.setStatusNotice(tr("Could not prepare archive members"), true);
+                return;
+            };
+        }
+    }
+
     const source = self.allocator.dupe(u8, path) catch return;
     var exe: [platform.exe.max_path]u8 = undefined;
     const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
@@ -259,6 +288,9 @@ pub fn chooseExtractionFolder(self: *App) void {
         return;
     };
     self.extract_picker_source = source;
+    self.extract_picker_members.deinit(self.allocator);
+    self.extract_picker_members = members;
+    members_transferred = true;
     self.extract_picker_fd = fd;
 }
 
@@ -295,16 +327,20 @@ pub fn extractionFolderReady(self: *App) void {
     };
     defer parsed.deinit();
     if (parsed.value.paths.len == 1 and std.fs.path.isAbsolute(parsed.value.paths[0])) {
-        self.startExtraction(self.extract_picker_source.?, parsed.value.paths[0]);
+        _ = @import("app_archives.zig").startExtraction(self, self.extract_picker_source.?, parsed.value.paths[0], self.extract_picker_members.items);
     }
 }
 
 pub fn activateItem(self: *App, idx: usize) void {
     if (idx >= self.items.items.len) return;
     const item = self.items.items[idx];
-    if (item.transfer_stub or std.ascii.endsWithIgnoreCase(item.name, ".torrent")) {
-        if (self.torrentForItem(idx)) |t| {
-            self.openTorrentDetails(t.id);
+    if (@import("app_torrent_browse.zig").activate(self, idx)) return;
+    // A torrent is a folder that has not materialized yet: it opens as one.
+    if (@import("app_torrents.zig").enabled and self.chooser == null and self.history.archive_len == 0) {
+        if (item.transfer_stub) {
+            if (self.torrentForItem(idx)) |t| if (self.browseTransfer(t.id)) return;
+        } else if (!item.is_dir and !item.missing and std.ascii.endsWithIgnoreCase(item.name, ".torrent")) {
+            self.browseTorrent(item.path);
             return;
         }
     }
@@ -324,7 +360,7 @@ pub fn activateItem(self: *App, idx: usize) void {
     } else if (archive.candidate(item.name)) {
         self.browseArchive(item.path);
     } else {
-        self.openFile(item.path);
+        _ = self.openFile(item.path);
     }
 }
 

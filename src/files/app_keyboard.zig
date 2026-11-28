@@ -24,7 +24,7 @@ pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
         c.XKB_KEY_BackSpace, c.XKB_KEY_Delete, c.XKB_KEY_Left, c.XKB_KEY_Right => true,
         else => false,
     }, utf8);
-    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
+    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and dlg.kind != .quit_jobs and typing;
     if (self.menu != null) return vertical;
     if (self.focus == .search or self.focus == .location_bar or self.focus == .filename) return typing;
     return vertical or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right or
@@ -42,7 +42,7 @@ fn sameFoldedText(a: []const u8, b: []const u8) bool {
 /// keeps timeout and cycling behavior deterministic in tests.
 pub fn typeSelectAt(self: *App, utf8: []const u8, now_ms: i64) bool {
     if (utf8.len == 0 or self.focus != .file_view or self.ctrl or self.alt or
-        self.transfer_view.active or self.items.items.len == 0)
+        self.items.items.len == 0)
     {
         return false;
     }
@@ -123,9 +123,17 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.terminalKey(sym, utf8);
         return;
     }
-    if (self.transfer_view.active) {
-        if (self.ctrl and (sym == c.XKB_KEY_l or sym == c.XKB_KEY_L)) self.leaveTransfers() else {
-            self.transferPaneKey(sym);
+    if (self.ctrl and self.tabs_visible) {
+        if (sym == c.XKB_KEY_t or sym == c.XKB_KEY_T) {
+            self.newTab();
+            return;
+        }
+        if (sym == c.XKB_KEY_w or sym == c.XKB_KEY_W) {
+            self.closeTab(self.tab_selected);
+            return;
+        }
+        if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
+            self.stepTabs(sym == c.XKB_KEY_Tab and !self.shift);
             return;
         }
     }
@@ -160,6 +168,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     }
 
     if (!self.ctrl and !self.alt and sym == c.XKB_KEY_space) {
+        // Inside a torrent, Space ticks what is selected.
+        if (@import("app_torrent_browse.zig").toggleSelected(self)) return;
         if (self.focused_index) |index| if (self.torrentForItem(index)) |t| {
             self.toggleTorrent(t);
             return;
@@ -241,15 +251,6 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         if (self.search_visible) {
             self.runHeader(.search);
             return;
-        }
-        if (self.job_runner) |runner| {
-            const prog = runner.pollProgress();
-            if (prog.state == .running or prog.state == .waiting_conflict) {
-                runner.cancel();
-                self.setStatusNotice(@import("i18n").tr("Cancelling operation..."), false);
-                self.invalidate();
-                return;
-            }
         }
         for (self.items.items) |*it| it.selected = false;
         self.selection_anchor = null;
@@ -349,7 +350,7 @@ pub fn handleLocationKey(self: *App, sym: u32, utf8: []const u8) void {
 
 pub fn activeEditor(self: *App) ?*Editor {
     if (self.dialog) |*dlg| return switch (dlg.kind) {
-        .new_folder, .new_file, .new_branch, .rename, .torrent_source, .torrent_destination => &dlg.edit,
+        .new_folder, .new_folder_from_selection, .new_file, .new_branch, .rename, .torrent_source, .torrent_destination => &dlg.edit,
         else => null,
     };
     return switch (self.focus) {

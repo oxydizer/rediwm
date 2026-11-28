@@ -139,16 +139,24 @@ msgstr ""
 msgid "A USB character device is not applicable to this connection."
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "A file already exists"
+msgstr ""
+
 #: src/control_center/sections/keys.zig
 msgid "A file already exists at that location. Choose another name."
 msgstr ""
 
-#: src/files/app_opening.zig
+#: src/files/app_dialogs.zig
 msgid "A file operation is already running"
 msgstr ""
 
 #: src/files/app_chooser.zig
 msgid "A file with this name exists. Replace it?"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "A folder and its contents cannot be moved together"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -259,10 +267,6 @@ msgstr ""
 msgid "Add to applications"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Add torrent…"
-msgstr ""
-
 #: src/control_center/sections/users.zig
 msgid "Add user"
 msgstr ""
@@ -293,6 +297,10 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Added {value} to Places"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "Adding download…"
 msgstr ""
 
 #: src/files/app_opening.zig
@@ -540,6 +548,10 @@ msgstr ""
 msgid "Apply crop · Enter"
 msgstr ""
 
+#: src/files/app_paint.zig
+msgid "Apply to all"
+msgstr ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "Apply value"
 msgstr ""
@@ -568,6 +580,10 @@ msgstr ""
 msgid "Apps that follow the system proxy use this. A manual proxy is also given to apps started from RediWM."
 msgstr ""
 
+#: src/files/app_archives.zig
+msgid "Archive clipboard copy cancelled"
+msgstr ""
+
 #: src/files/archive.zig
 msgid "Archive contains an unsafe path"
 msgstr ""
@@ -576,12 +592,44 @@ msgstr ""
 msgid "Archive contains unsupported links or special files"
 msgstr ""
 
+#: src/files/app_archives.zig
+msgid "Archive drag cancelled"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive extracted"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive extraction cancelled"
+msgstr ""
+
 #: src/files/archive.zig
 msgid "Archive has too many entries"
 msgstr ""
 
 #: src/files/archive.zig
 msgid "Archive is corrupt or unsupported"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive member is no longer in this view"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive member opened"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive member opening cancelled"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive members copied to clipboard"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Archive members ready for drag"
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -760,7 +808,11 @@ msgstr ""
 msgid "Available Devices"
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/transfers/popup_rows.zig
+msgid "Avg {average} · Peak {peak}"
+msgstr ""
+
+#: src/images/app.zig
 msgid "Back"
 msgstr ""
 
@@ -960,6 +1012,10 @@ msgstr ""
 msgid "Built-in audio player"
 msgstr ""
 
+#: src/files/app_requests.zig
+msgid "Busy, try again"
+msgstr ""
+
 #: src/control_center/sections/network_proxy.zig
 msgid "Bypass the proxy for"
 msgstr ""
@@ -1100,10 +1156,6 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
-#: src/files/app_paint.zig
-msgid "Cancel (C)"
-msgstr ""
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Cancel Pairing"
 msgstr ""
@@ -1120,32 +1172,28 @@ msgstr ""
 msgid "Cancel test"
 msgstr ""
 
-#: src/files/volumes.zig
+#: src/files/app_service.zig
 msgid "Cancelled"
 msgstr ""
 
-#: src/files/ops.zig
-msgid "Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr ""
-
-#: src/files/ops.zig
-msgid "Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr ""
-
-#: src/files/app_keyboard.zig
-msgid "Cancelling operation..."
+#: src/transfers/popup_rows.zig
+msgid "Cancelling…"
 msgstr ""
 
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
 msgstr ""
 
-#: src/files/client_dnd.zig
+#: src/files/app_requests.zig
 msgid "Cannot drop a folder into itself"
 msgstr ""
 
 #: src/files/app_terminal.zig
 msgid "Cannot insert paths containing control characters"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Cannot move a mounted directory"
 msgstr ""
 
 #: src/session/lock_input.zig
@@ -1420,8 +1468,8 @@ msgstr ""
 msgid "Choose files"
 msgstr ""
 
-#: src/files/torrents.zig
-msgid "Choose files to download"
+#: src/transfers/popup_rows.zig
+msgid "Choose files…"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -1438,6 +1486,10 @@ msgstr ""
 
 #: src/printing/cups.zig
 msgid "Choose the actual paper dimensions before printing this test."
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Choose the files to download"
 msgstr ""
 
 #: src/control_center/panel.zig
@@ -1478,6 +1530,10 @@ msgstr ""
 
 #: src/editor/app_recent.zig
 msgid "Clear Recent"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Clear finished ({count})"
 msgstr ""
 
 #: src/control_center/search.zig
@@ -1564,12 +1620,8 @@ msgstr ""
 msgid "Comment"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
+#: src/files/app_torrent_rows.zig
 msgid "Complete"
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Complete · Stopped"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -1714,24 +1766,40 @@ msgid_plural "Copied {count} items"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/transfers/popup_rows.zig
+msgid "Copies, moves and extractions in Files appear here."
+msgstr ""
+
 #: src/desktop/app_actions.zig
 msgid "Copy"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Copy cancelled"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Copy diagnostic report"
 msgstr ""
 
+#: src/files/app_transfers.zig
+msgid "Copy failed"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "Copy finished"
+msgstr ""
+
 #: src/control_center/sections/keys_details.zig
 msgid "Copy public key"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Copying"
+#: src/files/app_transfers.zig
+msgid "Copying items"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Copying files"
+#: src/files/app_transfers.zig
+msgid "Copying {name}"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -1766,7 +1834,7 @@ msgstr ""
 msgid "Could not apply or save the display scale."
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_requests.zig
 msgid "Could not apply permission changes"
 msgstr ""
 
@@ -1782,7 +1850,11 @@ msgstr ""
 msgid "Could not apply this choice. Please try again."
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_service.zig
+msgid "Could not cancel file transfer"
+msgstr ""
+
+#: src/files/app_requests.zig
 msgid "Could not change permissions"
 msgstr ""
 
@@ -1802,11 +1874,19 @@ msgstr ""
 msgid "Could not connect to systemd."
 msgstr ""
 
+#: src/files/app_transfers.zig
+msgid "Could not copy all items"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Could not copy archive members"
+msgstr ""
+
 #: src/images/app_edit.zig
 msgid "Could not crop this selection."
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_service.zig
 msgid "Could not delete all items"
 msgstr ""
 
@@ -1818,11 +1898,11 @@ msgstr ""
 msgid "Could not eject {name}"
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_service.zig
 msgid "Could not empty Trash"
 msgstr ""
 
-#: src/files/archive.zig
+#: src/files/app_archives.zig
 msgid "Could not extract archive"
 msgstr ""
 
@@ -1854,7 +1934,11 @@ msgstr ""
 msgid "Could not mount {name}"
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_transfers.zig
+msgid "Could not move all items"
+msgstr ""
+
+#: src/files/app_service.zig
 msgid "Could not move all items to Trash"
 msgstr ""
 
@@ -1874,7 +1958,7 @@ msgstr ""
 msgid "Could not open Text Editor"
 msgstr ""
 
-#: src/files/app_places.zig
+#: src/files/app_requests.zig
 msgid "Could not open Trash"
 msgstr ""
 
@@ -1882,7 +1966,7 @@ msgstr ""
 msgid "Could not open archive"
 msgstr ""
 
-#: src/files/app_opening.zig
+#: src/files/app_archives.zig
 msgid "Could not open archive member"
 msgstr ""
 
@@ -1894,11 +1978,11 @@ msgstr ""
 msgid "Could not open file"
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_requests.zig
 msgid "Could not open file to change permissions"
 msgstr ""
 
-#: src/files/app_places.zig
+#: src/files/app_requests.zig
 msgid "Could not open folder"
 msgstr ""
 
@@ -1930,8 +2014,24 @@ msgstr ""
 msgid "Could not open with this app. Choose another."
 msgstr ""
 
+#: src/files/app_service.zig
+msgid "Could not pause file transfer"
+msgstr ""
+
 #: src/files/app_audio.zig
 msgid "Could not play the file"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Could not prepare archive drag"
+msgstr ""
+
+#: src/files/app_opening.zig
+msgid "Could not prepare archive members"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Could not prepare archive members for Open With"
 msgstr ""
 
 #: src/pdf/app_document.zig
@@ -1958,7 +2058,7 @@ msgstr ""
 msgid "Could not read Wi-Fi networks"
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_requests.zig
 msgid "Could not read file permissions"
 msgstr ""
 
@@ -1978,7 +2078,7 @@ msgstr ""
 msgid "Could not read permissions"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Could not read recent files"
 msgstr ""
 
@@ -2014,12 +2114,16 @@ msgstr ""
 msgid "Could not reset. The previous settings were restored."
 msgstr ""
 
-#: src/files/app_trash.zig
-msgid "Could not restore the items in Trash"
+#: src/files/app_requests.zig
+msgid "Could not resolve file conflict"
 msgstr ""
 
 #: src/files/app_trash.zig
 msgid "Could not restore the selected items"
+msgstr ""
+
+#: src/files/app_service.zig
+msgid "Could not resume file transfer"
 msgstr ""
 
 #: src/images/app_input.zig
@@ -2142,7 +2246,7 @@ msgstr ""
 msgid "Could not start deleting this file."
 msgstr ""
 
-#: src/files/app_opening.zig
+#: src/files/app_archives.zig
 msgid "Could not start extraction"
 msgstr ""
 
@@ -2186,6 +2290,10 @@ msgstr ""
 msgid "Could not subscribe to service updates."
 msgstr ""
 
+#: src/files/app_archives.zig
+msgid "Could not take extracted archive members"
+msgstr ""
+
 #: src/files/volumes.zig
 msgid "Could not use the device"
 msgstr ""
@@ -2212,6 +2320,10 @@ msgstr ""
 
 #: src/desktop/watcher.zig
 msgid "Could not {operation}: {error}"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Counting…"
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -2426,6 +2538,10 @@ msgstr ""
 
 #: src/files/trash_properties.zig
 msgid "Deleted files and folders"
+msgstr ""
+
+#: src/files/app_service.zig
+msgid "Deleting items…"
 msgstr ""
 
 #: src/session/power_capabilities.zig
@@ -2648,12 +2764,12 @@ msgstr ""
 msgid "Download"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Download to folder"
+#: src/files/io_coordinator_notify.zig
+msgid "Download finished"
 msgstr ""
 
-#: src/files/torrents.zig
-msgid "Downloaded · Seeding"
+#: src/files/app_torrents.zig
+msgid "Download to folder"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
@@ -2664,8 +2780,12 @@ msgstr ""
 msgid "Downloads"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Downloads continue after closing Files."
+#: src/files/torrents.zig
+msgid "Downloads are not reachable right now. Try again in a moment."
+msgstr ""
+
+#: src/files/torrents.zig
+msgid "Downloads stopped answering. Open the folder again to reconnect."
 msgstr ""
 
 #: src/printing/options.zig
@@ -2806,6 +2926,10 @@ msgstr ""
 
 #: src/desktop/app_actions.zig
 msgid "Empty Trash…"
+msgstr ""
+
+#: src/files/app_service.zig
+msgid "Emptying Trash…"
 msgstr ""
 
 #: src/control_center/sections/power.zig
@@ -3020,43 +3144,35 @@ msgstr ""
 msgid "Extract to…"
 msgstr ""
 
-#: src/files/ops.zig
-msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr ""
-
-#: src/files/app_sidebar_paint.zig
-msgid "Extracting"
-msgstr ""
-
-#: src/files/app_sidebar_paint.zig
-msgid "Extracting archive member"
-msgstr ""
-
-#: src/files/app_sidebar_paint.zig
-msgid "Extracting files"
+#: src/files/app_archives.zig
+msgid "Extracting archive"
 msgstr ""
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
 msgstr ""
 
+#: src/files/io_coordinator_notify.zig
+msgid "Extraction finished"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Failed"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Failed to create file"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Failed to create folder"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Failed to rename"
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_transfers.zig
 msgid "Failed to start transfer job"
 msgstr ""
 
@@ -3072,7 +3188,7 @@ msgstr ""
 msgid "Fcitx's current group has no input methods besides keyboards."
 msgstr ""
 
-#: src/files/torrents.zig
+#: src/files/app_torrent_browse.zig
 msgid "Fetching file list…"
 msgstr ""
 
@@ -3092,7 +3208,7 @@ msgstr ""
 msgid "File Manager"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "File already exists"
 msgstr ""
 
@@ -3100,7 +3216,7 @@ msgstr ""
 msgid "File changed on disk. Use Save As to keep your edits in another file."
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "File created"
 msgstr ""
 
@@ -3120,12 +3236,28 @@ msgstr ""
 msgid "File not found."
 msgstr ""
 
+#: src/files/io_coordinator_notify.zig
+msgid "File operation cancelled"
+msgstr ""
+
 #: src/desktop/watcher.zig
 msgid "File operation failed"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "File transfer"
+#: src/files/io_coordinator_notify.zig
+msgid "File operation finished"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "File operation finished with errors"
+msgstr ""
+
+#: src/files/app_quit.zig
+msgid "File operations are running"
+msgstr ""
+
+#: src/files/app_quit.zig
+msgid "File operations are still running."
 msgstr ""
 
 #: src/control_center/sections/keys_forms.zig
@@ -3182,6 +3314,18 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Finish the running file operation first"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Finished"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Finished with errors"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Finishing…"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -3316,15 +3460,15 @@ msgstr ""
 msgid "Folder"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Folder already exists"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Folder created"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Folder not found"
 msgstr ""
 
@@ -3334,6 +3478,10 @@ msgstr ""
 
 #: src/files/app_chooser.zig
 msgid "Folder:"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Folders first"
 msgstr ""
 
 #: src/files/app_menu.zig
@@ -3414,10 +3562,6 @@ msgstr ""
 
 #: src/control_center/sections/region.zig
 msgid "Formats Preview"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Forward"
 msgstr ""
 
 #: src/control_center/sections/firewall.zig
@@ -3504,12 +3648,12 @@ msgstr ""
 msgid "Good"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Grid"
-msgstr ""
-
 #: src/files/app_paint.zig
 msgid "Group"
+msgstr ""
+
+#: src/files/properties.zig
+msgid "On disk"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -3685,11 +3829,11 @@ msgid "In Files, click an icon to open it in list or icons view. Click the name 
 msgstr ""
 
 #: src/control_center/tree.zig
-msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
+msgid "In Files, list folders before files. A folder where you changed this in Files keeps its own choice."
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "In progress"
+#: src/control_center/tree.zig
+msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -3812,7 +3956,7 @@ msgstr ""
 msgid "Invalid branch name"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Invalid characters in name"
 msgstr ""
 
@@ -3872,15 +4016,35 @@ msgstr ""
 msgid "Italic clock text"
 msgstr ""
 
+#: src/files/app_transfers.zig
+msgid "Item copied"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Item moved"
+msgstr ""
+
 #: src/files/app_paint.zig
 msgid "Items"
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_transfers.zig
+msgid "Items copied"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "Items deleted"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Items moved"
+msgstr ""
+
+#: src/files/app_service.zig
 msgid "Items moved to Trash"
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_service.zig
 msgid "Items permanently deleted"
 msgstr ""
 
@@ -3930,6 +4094,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Keep printer"
+msgstr ""
+
+#: src/files/app_paint.zig
+msgid "Keep running"
 msgstr ""
 
 #: src/control_center/sections/power.zig
@@ -4006,6 +4174,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Last job"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Last minute"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
@@ -4098,10 +4270,6 @@ msgstr ""
 
 #: src/control_center/sections/network_details.zig
 msgid "Link-local only"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "List"
 msgstr ""
 
 #: src/control_center/sections/firewall_cards.zig
@@ -4332,10 +4500,6 @@ msgstr ""
 msgid "Measured rectangle width"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Measuring…"
-msgstr ""
-
 #: src/control_center/sections/shortcuts.zig
 msgid "Media"
 msgstr ""
@@ -4378,6 +4542,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Menu width"
+msgstr ""
+
+#: src/files/app_paint.zig
+msgid "Merge"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
@@ -4472,20 +4640,28 @@ msgstr ""
 msgid "Mounting…"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Move"
-msgstr ""
-
 #: src/control_center/sections/shortcuts.zig
 msgid "Move To Workspace"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Move cancelled"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
 msgid "Move down"
 msgstr ""
 
+#: src/files/app_transfers.zig
+msgid "Move failed"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Move file manager aside"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "Move finished"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -4548,16 +4724,20 @@ msgstr ""
 msgid "Moved to Trash."
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Moving"
+#: src/files/app_transfers.zig
+msgid "Moving items"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Moving files"
+#: src/files/app_service.zig
+msgid "Moving items to Trash…"
 msgstr ""
 
 #: src/images/app_render.zig
 msgid "Moving to Trash…"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Moving {name}"
 msgstr ""
 
 #: src/files/app.zig
@@ -4596,7 +4776,7 @@ msgstr ""
 msgid "Name"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Name cannot be empty"
 msgstr ""
 
@@ -4698,6 +4878,18 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "New SSH key"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "New Torrent"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "New Torrent…"
 msgstr ""
 
 #: src/editor/app.zig
@@ -4976,8 +5168,8 @@ msgstr ""
 msgid "No terminal directory"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "No transfers yet. Add a .torrent file or magnet link."
+#: src/transfers/popup_rows.zig
+msgid "No transfers"
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -5016,7 +5208,7 @@ msgstr ""
 msgid "Normal"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Not a directory"
 msgstr ""
 
@@ -5172,7 +5364,7 @@ msgstr ""
 msgid "One-sided"
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_requests.zig
 msgid "Only the owner can change permissions"
 msgstr ""
 
@@ -5191,6 +5383,10 @@ msgstr ""
 
 #: src/files/app.zig
 msgid "Open File"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Open Files"
 msgstr ""
 
 #: src/editor/app.zig
@@ -5255,6 +5451,10 @@ msgstr ""
 
 #: src/files/open_with.zig
 msgid "Opened, but could not save the default app"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Opening archive member"
 msgstr ""
 
 #: src/pdf/app_paint.zig
@@ -5453,16 +5653,32 @@ msgstr ""
 msgid "Paste"
 msgstr ""
 
+#: src/files/app_paint.zig
+msgid "Paste a magnet link"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "Paste a magnet link (magnet:?…)"
+msgstr ""
+
 #: src/files/app_audio.zig
 msgid "Pause"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Pause all"
 msgstr ""
 
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
+#: src/files/app_torrent_rows.zig
 msgid "Paused"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Peak {speed}"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -5481,7 +5697,7 @@ msgstr ""
 msgid "Permanently delete all trashed files and folders"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Permission denied"
 msgstr ""
 
@@ -5657,8 +5873,20 @@ msgstr ""
 msgid "Prefix length"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Preparing…"
+#: src/files/app_archives.zig
+msgid "Preparing archive members for Open With cancelled"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Preparing archive members for Open With…"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Preparing archive members for clipboard"
+msgstr ""
+
+#: src/files/app_archives.zig
+msgid "Preparing files for drag…"
 msgstr ""
 
 #: src/session/lock_account.zig
@@ -5857,10 +6085,6 @@ msgstr ""
 msgid "Programs waiting for connections, and who can reach them through the firewall."
 msgstr ""
 
-#: src/files/app_layout.zig
-msgid "Progress"
-msgstr ""
-
 #: src/files/app.zig
 msgid "Projects"
 msgstr ""
@@ -5957,6 +6181,10 @@ msgstr ""
 msgid "Queue: {name}"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Queued"
+msgstr ""
+
 #: src/start_menu/menu_cards.zig
 msgid "Quick Launch"
 msgstr ""
@@ -5997,11 +6225,15 @@ msgstr ""
 msgid "Read only"
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "Reading torrent…"
+msgstr ""
+
 #: src/control_center/sections/firewall.zig
 msgid "Reading…"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
+#: src/printing/cups.zig
 msgid "Ready"
 msgstr ""
 
@@ -6133,10 +6365,6 @@ msgstr ""
 msgid "Remove this printer"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Remove · keep files"
-msgstr ""
-
 #: src/control_center/sections/firewall_rules.zig
 msgid "Remove?"
 msgstr ""
@@ -6145,15 +6373,11 @@ msgstr ""
 msgid "Rename"
 msgstr ""
 
-#: src/files/app_paint.zig
-msgid "Rename (R)"
-msgstr ""
-
 #: src/desktop/app_paint.zig
 msgid "Rename — Enter saves, Escape cancels"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Renamed successfully"
 msgstr ""
 
@@ -6209,12 +6433,16 @@ msgstr ""
 msgid "Requesting power action…"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Reserved file name"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Reserved folder name"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "Reset Folder View"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6271,6 +6499,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "Resolve the reported printer problem before resuming the queue."
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Resolve…"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -6349,6 +6581,10 @@ msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Resume"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Resume all"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -6707,20 +6943,16 @@ msgstr ""
 msgid "See your position while navigating. Drag the highlighted view to pan."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 1"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 2"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Seed: stop at finish"
-msgstr ""
-
 #: src/files/app_torrent_rows.zig
 msgid "Seeding"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Seeding · ratio {ratio}"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Seeding · ratio {ratio} of {limit}"
 msgstr ""
 
 #: src/files/app_chooser.zig
@@ -6823,6 +7055,10 @@ msgstr ""
 msgid "Shared"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Sharing"
+msgstr ""
+
 #: src/control_center/sections/appearance.zig
 msgid "Sharp"
 msgstr ""
@@ -6869,10 +7105,6 @@ msgstr ""
 
 #: src/files/app_menu.zig
 msgid "Show hidden files"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Show in folder"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
@@ -6944,7 +7176,7 @@ msgid "Sized to fit your screen · move a slider to set your own"
 msgstr ""
 
 #: src/files/app_paint.zig
-msgid "Skip (S)"
+msgid "Skip"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -7027,6 +7259,10 @@ msgstr ""
 msgid "Some have no Trash information"
 msgstr ""
 
+#: src/files/app_transfers.zig
+msgid "Some items cannot be transferred"
+msgstr ""
+
 #: src/files/app_trash.zig
 msgid "Some kept under a new name"
 msgstr ""
@@ -7043,7 +7279,7 @@ msgstr ""
 msgid "Spawn"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
+#: src/printing/options.zig
 msgid "Speed"
 msgstr ""
 
@@ -7083,10 +7319,6 @@ msgstr ""
 msgid "Start button logo"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Start download"
-msgstr ""
-
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start menu"
 msgstr ""
@@ -7109,6 +7341,10 @@ msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "Start using RediWM"
+msgstr ""
+
+#: src/files/app_torrent_browse.zig
+msgid "Starting download…"
 msgstr ""
 
 #: src/session/greeter.zig
@@ -7147,6 +7383,10 @@ msgstr ""
 msgid "Steam Remote Play"
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "Still downloading"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Stop"
 msgstr ""
@@ -7165,6 +7405,14 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "Stop charging at"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Stop seeding"
+msgstr ""
+
+#: src/files/app_paint.zig
+msgid "Stop them"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -7295,7 +7543,7 @@ msgstr ""
 msgid "Symbolic link"
 msgstr ""
 
-#: src/files/app_pointer.zig
+#: src/files/app_requests.zig
 msgid "Symbolic link permissions cannot be changed"
 msgstr ""
 
@@ -7347,10 +7595,6 @@ msgstr ""
 msgid "TEMP"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "TRANSFERS"
-msgstr ""
-
 #: src/control_center/sections/shortcuts.zig
 msgid "Take shortcuts back from a virtual machine or remote desktop."
 msgstr ""
@@ -7367,7 +7611,7 @@ msgstr ""
 msgid "Tap to click"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/files/app_requests.zig
 msgid "Target name already exists"
 msgstr ""
 
@@ -7543,7 +7787,7 @@ msgstr ""
 msgid "The current printer resolution is unavailable."
 msgstr ""
 
-#: src/files/client_dnd.zig
+#: src/files/app_requests.zig
 msgid "The destination folder is unavailable"
 msgstr ""
 
@@ -7597,6 +7841,10 @@ msgstr ""
 
 #: src/control_center/sections/firewall.zig
 msgid "The firewall helper did not answer."
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "The items are already here"
 msgstr ""
 
 #: src/control_center/sections/keys.zig
@@ -7799,6 +8047,10 @@ msgstr ""
 msgid "This display or its driver did not accept HDR in this mode, so it stays SDR."
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "This download is no longer available"
+msgstr ""
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr ""
@@ -7871,12 +8123,12 @@ msgstr ""
 msgid "This setting is unavailable on this device or in the current mode."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "This transfer is no longer available."
-msgstr ""
-
 #: src/control_center/sections/region.zig
 msgid "Thursday"
+msgstr ""
+
+#: src/files/app_torrent_browse.zig
+msgid "Tick the file to download it"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -7963,6 +8215,18 @@ msgstr ""
 msgid "Toggle the focused window between floating and automatic tiling."
 msgstr ""
 
+#: src/files/app_archives.zig
+msgid "Too many archive jobs running"
+msgstr ""
+
+#: src/files/app_service.zig
+msgid "Too many deletions running"
+msgstr ""
+
+#: src/files/app_transfers.zig
+msgid "Too many transfers running"
+msgstr ""
+
 #: src/control_center/sections/appearance_sections.zig
 msgid "Top"
 msgstr ""
@@ -7975,32 +8239,12 @@ msgstr ""
 msgid "Traffic passing through this computer, for virtual machines or sharing a connection."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Transfer"
-msgstr ""
-
 #: src/files/torrents.zig
 msgid "Transfer request could not be sent. Please retry."
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Transferred"
-msgstr ""
-
-#: src/files/ops.zig
-msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr ""
-
-#: src/files/app.zig
+#: src/transfers/popup.zig
 msgid "Transfers"
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -8015,11 +8259,11 @@ msgstr ""
 msgid "Trash can't be edited. Restore items to change them."
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_service.zig
 msgid "Trash emptied"
 msgstr ""
 
-#: src/files/app_trash.zig
+#: src/files/app_requests.zig
 msgid "Trash is empty"
 msgstr ""
 
@@ -8027,7 +8271,7 @@ msgstr ""
 msgid "Trash is unavailable: install gio to use it."
 msgstr ""
 
-#: src/files/app_fileops.zig
+#: src/files/app_service.zig
 msgid "Trash unavailable (gio not installed)"
 msgstr ""
 
@@ -8239,24 +8483,8 @@ msgstr ""
 msgid "Untitled"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Up"
-msgstr ""
-
 #: src/network/manager_actions.zig
 msgid "Updating Wi-Fi…"
-msgstr ""
-
-#: src/files/app_layout.zig
-msgid "Upload"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Upload: 1 MiB/s"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Upload: 128 KiB/s"
 msgstr ""
 
 #: src/power_menu.zig
@@ -8403,16 +8631,12 @@ msgstr ""
 msgid "Waiting for authentication…"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "Waiting for confirmation"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Waiting for decision"
-msgstr ""
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Waiting for the device…"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Waiting for {place}…"
 msgstr ""
 
 #: src/polkit/dialog.zig
@@ -8925,6 +9149,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "files folders application"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "files folders directories sort order before"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -9449,9 +9677,25 @@ msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/transfers/popup.zig
+msgid "{count} active"
+msgstr ""
+
 #: src/files/app_trash.zig
 msgid "{count} could not be restored"
 msgstr ""
+
+#: src/files/app_quit.zig
+msgid "{count} file operation is still running."
+msgid_plural "{count} file operations are still running."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/files/app_torrent_browse.zig
+msgid "{count} file · {size} · tick files to download them into {path}"
+msgid_plural "{count} files · {size} · tick files to download them into {path}"
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/files/app_trash.zig
 msgid "{count} has no Trash information"
@@ -9475,8 +9719,22 @@ msgstr[1] ""
 msgid "{count} kept under a new name"
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "{count} of {total} file ticked · {done} of {size} · into {path}"
+msgid_plural "{count} of {total} files ticked · {done} of {size} · into {path}"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/transfers/popup_rows.zig
+msgid "{count} peers"
+msgstr ""
+
 #: src/control_center/sections/firewall_cards.zig
 msgid "{count} rules"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "{count} seeding"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -9488,12 +9746,6 @@ msgstr[1] ""
 #: src/delete_dialog.zig
 msgid "{count} selected item"
 msgid_plural "{count} selected items"
-msgstr[0] ""
-msgstr[1] ""
-
-#: src/files/app_paint.zig
-msgid "{count} transfer · Downloads continue after closing Files."
-msgid_plural "{count} transfers · Downloads continue after closing Files."
 msgstr[0] ""
 msgstr[1] ""
 
@@ -9510,6 +9762,10 @@ msgid "{count}{more} item"
 msgid_plural "{count}{more} items"
 msgstr[0] ""
 msgstr[1] ""
+
+#: src/transfers/popup_rows.zig
+msgid "{done} of {total} items"
+msgstr ""
 
 #: src/system_monitor/app_footer.zig
 msgid "{hours}h {minutes}m"
@@ -9553,6 +9809,10 @@ msgstr ""
 
 #: src/control_center/sections/region.zig
 msgid "{name} ({locale})"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "{name} and {count} more"
 msgstr ""
 
 #: src/files/app_places.zig
@@ -9645,14 +9905,6 @@ msgid_plural "{n} threads"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/files/app_torrents.zig
-msgid "{rate} KiB/s"
-msgstr ""
-
-#: src/files/app_sidebar_paint.zig
-msgid "{rate}/s"
-msgstr ""
-
 #: src/control_center/sections/input_sources.zig
 msgid "{shown} of {total} layouts; type to narrow the list."
 msgstr ""
@@ -9667,24 +9919,12 @@ msgstr[1] ""
 msgid "{size} Volume"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "{size} selected · {path}"
-msgstr ""
-
 #: src/control_center/sections/printers_details.zig
 msgid "{value} (supported {min}–{max})"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-msgstr ""
-
 #: src/taskbar/battery.zig
 msgid "~{time} left"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "↑ {upload}/s · ↓ {download}/s"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
@@ -9741,7 +9981,7 @@ msgctxt "desktop:Comment"
 msgid "Play videos with RediWM"
 msgstr ""
 
-#: data/rediwm-release-safe.desktop
+#: data/rediwm.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
 msgstr ""
@@ -9841,7 +10081,7 @@ msgctxt "desktop:Name"
 msgid "RediTerm"
 msgstr ""
 
-#: data/rediwm-release-safe.desktop
+#: data/rediwm-release-safe.desktop data/rediwm.desktop
 msgctxt "desktop:Name"
 msgid "RediWM"
 msgstr ""

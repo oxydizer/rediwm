@@ -277,6 +277,7 @@ pub fn runFrame(output: *Output) void {
     var taskbar_popup_animating = false;
     if (output.wifi_popup) |popup| taskbar_popup_animating = popup.tick(now_ms);
     if (output.battery_popup) |popup| taskbar_popup_animating = popup.tick(now_ms) or taskbar_popup_animating;
+    if (output.transfers_popup) |popup| taskbar_popup_animating = popup.tick(now_ms) or taskbar_popup_animating;
     if (output.calendar) |calendar| taskbar_popup_animating = calendar.tick(now_ms) or taskbar_popup_animating;
 
     var notif_animating = false;

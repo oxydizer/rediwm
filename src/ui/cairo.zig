@@ -302,6 +302,18 @@ pub fn drawTextFont(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f
 }
 
 pub fn drawStyledText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, font: text.Font, italic: bool) void {
+    drawStyledTextRaster(cr_any, str, x, y, size, font, italic);
+}
+
+fn drawStyledTextRaster(
+    cr_any: *anyopaque,
+    str: []const u8,
+    x: f64,
+    y: f64,
+    size: f64,
+    font: text.Font,
+    italic: bool,
+) void {
     // Spaces have no ink: skip the raster and the composite (blank terminal rows).
     if (std.mem.indexOfNone(u8, str, " ") == null) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
@@ -327,13 +339,14 @@ pub fn drawStyledText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size:
     const pixels = allocator.alloc(u32, @intCast(w_dev * h_dev)) catch return;
     defer allocator.free(pixels);
     @memset(pixels, 0);
-    text.drawOpts(pixels, w_dev, h_dev, str, .{ .r = @floatCast(red), .g = @floatCast(green), .b = @floatCast(blue), .a = @floatCast(alpha) }, s, font, size_f, .{
+    const options: text.DrawOptions = .{
         .rect = .{ .x = pad, .y = 0, .w = w_logical - pad, .h = h_logical },
         .clip = .{ .x = 0, .y = 0, .w = w_logical, .h = h_logical },
         .ellipsize = false,
         .baseline = baseline,
         .italic = italic,
-    }) catch return;
+    };
+    text.drawOpts(pixels, w_dev, h_dev, str, .{ .r = @floatCast(red), .g = @floatCast(green), .b = @floatCast(blue), .a = @floatCast(alpha) }, s, font, size_f, options) catch return;
 
     // Pen and baseline onto whole device pixels, so the raster lands 1:1.
     // drawOpts started the pen at the rounded device pad (`text.devicePixels`),

@@ -478,6 +478,7 @@ pub const CloseSnapshot = struct {
 pub const hasServerDecorations = toplevel_chrome_metrics.hasServerDecorations;
 pub const chromeDensity = toplevel_chrome_metrics.chromeDensity;
 pub const titlebarHeight = toplevel_chrome_metrics.titlebarHeight;
+pub const chromeMetrics = toplevel_chrome_metrics.chromeMetrics;
 pub const borderWidth = toplevel_chrome_metrics.borderWidth;
 pub const hasWorkspaceFocusBorder = toplevel_chrome_metrics.hasWorkspaceFocusBorder;
 pub const borderColor = toplevel_chrome_metrics.borderColor;

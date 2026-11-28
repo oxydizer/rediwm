@@ -6,10 +6,183 @@ const c = @import("c.zig").api;
 const nowMs = @import("app_draw.zig").nowMs;
 const app_tests = @import("app_tests.zig");
 const ops_mod = @import("ops.zig");
+const io_service = @import("io_service.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
-test "Files: the second click of a double-click on an icon does not open it again" {
+/// A window linked to a service with no coordinator: what it sends stays
+/// queued for the test to read.
+const Linked = struct {
+    service: io_service.Service = .{},
+    handle: io_service.Handle = undefined,
+
+    fn start(self: *Linked, app: anytype) !void {
+        try self.service.init();
+        self.handle = try self.service.registerWindow();
+        app.service.handle = self.handle;
+    }
+
+    fn stop(self: *Linked, app: anytype) void {
+        app.service.handle = null;
+        while (self.service.tryReceiveCommand()) |routed| {
+            var command = routed.command;
+            command.deinitPayload();
+        }
+        self.handle.close();
+        self.service.deinit();
+    }
+
+    /// The priority requests sent so far, as `job:entry`.
+    fn priorities(self: *Linked, out: []u64) usize {
+        var count: usize = 0;
+        while (self.service.tryReceiveCommand()) |routed| {
+            var command = routed.command;
+            defer command.deinitPayload();
+            if (command.kind != .prioritize_entry or count == out.len) continue;
+            out[count] = command.job_id * 1000 + command.resource_id;
+            count += 1;
+        }
+        return count;
+    }
+};
+
+const ghost_job = 7;
+const ghost_entry = 3;
+
+/// Item `index` becomes a queued ghost file of a service copy.
+fn attachEligibleCopyGhost(app: anytype, index: usize) void {
+    app.items.items[index].transfer_ghost = true;
+    app.items.items[index].transfer_job_id = ghost_job;
+    app.items.items[index].transfer_entry_id = ghost_entry;
+    app.items.items[index].transfer_state = .pending;
+    app.items.items[index].missing = true;
+}
+
+test "copy ghost hover waits for dwell and asks the service once" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    // The dwell has not elapsed yet.
+    app.stepTransferHoverPriority(deadline - 1);
+    try std.testing.expectEqual(deadline, app.transferHoverPriorityDeadline().?);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
+
+    // At the deadline the preference is requested exactly once; leaving
+    // afterwards does not take it back.
+    app.stepTransferHoverPriority(deadline);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+    app.stepTransferHoverPriority(deadline + 1000);
+    app.handleMotion(-10, -10);
+    try std.testing.expectEqual(@as(usize, 1), linked.priorities(&sent));
+    try std.testing.expectEqual(@as(u64, ghost_job * 1000 + ghost_entry), sent[0]);
+}
+
+test "leaving a copy ghost before the hover dwell cancels its preference" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    app.handleMotion(-10, -10);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+    app.stepTransferHoverPriority(deadline);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
+}
+
+test "pressing over a copy ghost cancels its pending hover priority" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    app.handleButton(0x110, true);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+    app.stepTransferHoverPriority(deadline);
+    try std.testing.expect(app.transfer_hover_priority == null);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
+}
+
+test "a copy ghost priority that cannot be sent clears its pending hover request" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+    attachEligibleCopyGhost(&app, 0);
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    // No service to ask.
+    app.stepTransferHoverPriority(deadline);
+    try std.testing.expect(app.transfer_hover_priority == null);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
+test "file dragging across a copy ghost does not arm hover priority" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 2);
+    attachEligibleCopyGhost(&app, 1);
+
+    const source = app.itemIconRect(0);
+    const target = app.itemIconRect(1);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+    try std.testing.expect(app.transferHoverPriorityDeadline() != null);
+
+    app.handleMotion(source.x + source.w / 2, source.y + source.h / 2);
+    app.handleButton(0x110, true);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+
+    try std.testing.expect(app.drag_ready);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
+test "rubber-band selection across a copy ghost does not arm hover priority" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+    attachEligibleCopyGhost(&app, 0);
+
+    const target = app.itemIconRect(0);
+    const top: f64 = @floatFromInt(app.viewTop() + app.itemInset());
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+    try std.testing.expect(app.transferHoverPriorityDeadline() != null);
+
+    app.handleMotion(215, top - 5);
+    app.handleButton(0x110, true);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+
+    try std.testing.expect(app.selection_band != null);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
+test "Files: the second click of a double-click does not open the item again" {
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 20);
@@ -64,6 +237,7 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 10);
+    app.single_click_open = false;
     app.items.items[0].selected = true;
     app.items.items[1].selected = true;
     app.handleMotion(310, 158);
@@ -75,6 +249,8 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     try std.testing.expect(app.drag_ready);
     app.handleButton(0x110, false);
     try std.testing.expect(app.items.items[1].selected);
+    app.last_click_index = null;
+    app.last_click_time = 0;
     app.handleMotion(310, 158);
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
@@ -94,7 +270,7 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     try std.testing.expect(!app.items.items[0].selected);
 }
 
-test "single-click opening targets only visible icons and cancels for selection or dragging" {
+test "single-click opening targets whole rows and cancels for selection or dragging" {
     for ([_]bool{ false, true }) |list| {
         var app = try testApp();
         defer app.deinit();
@@ -104,7 +280,7 @@ test "single-click opening targets only visible icons and cancels for selection 
         const x = rect.x + rect.w / 2;
         const y = rect.y + rect.h / 2;
         try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(x, y)));
-        try std.testing.expectEqualStrings("default", std.mem.span(app.pointerCursor(rect.x + rect.w + 8, y)));
+        try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(rect.x + rect.w + 8, y)));
         app.handleMotion(x, y);
         app.handleButton(0x110, true);
         try std.testing.expectEqual(@as(?usize, 0), app.open_on_release);
@@ -133,7 +309,7 @@ test "single-click opening targets only visible icons and cancels for selection 
         app.cancelDrag();
         app.single_click_open = true;
         app.scroll_y = @intFromFloat(rect.y + rect.h - app.viewTop());
-        try std.testing.expect(app.singleClickIconAt(x, @floatFromInt(app.viewTop() - 1)) == null);
+        try std.testing.expect(app.singleClickItemAt(x, @floatFromInt(app.viewTop() - 1)) == null);
         if (list) {
             app.scroll_y = 0;
             app.scroll_x = 12;
@@ -382,57 +558,6 @@ test "sidebar scrollbar pages, drags outside and resets on resize" {
     try std.testing.expect(app.sidebar_scroll_appearance.deadline == null);
     app.resize(360, 240);
     try std.testing.expect(app.sidebarScrollbar() == null);
-}
-
-test "Transfers scroll extent includes an active file-operation row" {
-    var app = try testApp();
-    defer app.deinit();
-
-    app.job_runner = try ops_mod.JobRunner.init(app.allocator);
-    app.transfer_view.active = true;
-    const idle_height = app.contentHeight();
-    const runner = app.job_runner.?;
-
-    runner.state = .running;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
-
-    runner.state = .paused;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
-
-    runner.state = .waiting_conflict;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
-
-    runner.state = .finished;
-    try std.testing.expectEqual(idle_height, app.contentHeight());
-}
-
-test "Transfers toolbar pauses, resumes and cancels a selected file operation" {
-    var app = try testApp();
-    defer app.deinit();
-
-    app.job_runner = try ops_mod.JobRunner.init(app.allocator);
-    app.transfer_view.active = true;
-    app.transfer_view.row = 0;
-
-    const runner = app.job_runner.?;
-    runner.kind = .copy;
-    runner.state = .running;
-
-    const scale = @min(1.0, @max(0.0, (@as(f32, @floatFromInt(app.w)) - 64) / 424));
-    const add_width = 112 * scale;
-    const pause_x: f64 = 12 + add_width + 8 + 1;
-    const cancel_x: f64 = 12 + add_width + 8 + 92 * scale + 8 + 1;
-
-    try std.testing.expect(app.transferPaneClick(pause_x, 65, 0x110));
-    try std.testing.expect(runner.pause_requested);
-
-    runner.state = .paused;
-    try std.testing.expect(app.transferPaneClick(pause_x, 65, 0x110));
-    try std.testing.expectEqual(ops_mod.JobState.running, runner.state);
-    try std.testing.expect(!runner.pause_requested);
-
-    try std.testing.expect(app.transferPaneClick(cancel_x, 65, 0x110));
-    try std.testing.expect(runner.cancel_flag.load(.acquire));
 }
 
 test "file selection fades in and out while logical selection is immediate" {

@@ -59,6 +59,7 @@ pub fn deactivateSession(server: *Server) void {
         out.closePowerMenu();
         out.closeBattery();
         out.closeWifi();
+        out.closeTransfers();
     }
     if (server.input.open_control_center) |cc| cc.pointer_down = false;
 
@@ -166,6 +167,12 @@ pub fn startDesktopService(server: *Server, step: usize) bool {
         },
         5 => if (server.input_sources) |sources| sources.startServices(),
         6 => {
+            server.transfers = @import("../transfers/client.zig").Client.create(server) catch |err| blk: {
+                log.info("init: no Transfers panel: {}", .{err});
+                break :blk null;
+            };
+        },
+        7 => {
             if (@import("builtin").os.tag != .linux) return false;
             server.keyboard_backlight_watch = @import("../keyboard_backlight.zig").create(server, @import("../main.zig").gpa) catch null;
         },

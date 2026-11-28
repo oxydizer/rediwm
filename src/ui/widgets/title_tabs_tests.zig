@@ -45,6 +45,17 @@ test "an empty strip has no hits and no hash" {
     try std.testing.expectEqual(@as(u64, 0), tt.hash(s));
 }
 
+test "Files uses eight-pixel padding on each side of the tabless control row" {
+    const chrome = @import("../window_chrome.zig");
+    const s: tt.Strip = .{ .layout = .files };
+    const m: chrome.Metrics = .{ .layout = s.layout };
+    const close = chrome.controlRectFor(400, .close, m);
+    try std.testing.expectEqual(@as(i32, 44), m.titlebarHeight());
+    try std.testing.expectEqual(@as(i32, 8), close.y);
+    try std.testing.expectEqual(@as(i32, 8), m.titlebarHeight() - close.y - close.h);
+    try std.testing.expectEqual(tt.Hit.none, tt.hit(400, 1, s, 120, 20));
+}
+
 test "a retitled tab changes the hash but not the layout hash" {
     const a = strip();
     const b: tt.Strip = .{ .tabs = &retitled };

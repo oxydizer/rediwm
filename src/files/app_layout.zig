@@ -29,7 +29,17 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
     defer if (surface) |s| c.cairo_surface_destroy(s);
     const cr = target orelse (c.cairo_create(surface) orelse return null);
     defer if (target == null) c.cairo_destroy(cr);
+    if (target == null) c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
     const r = header.field(self.w);
+    const area = App.textArea(r, false, true);
+    const pad_y = header.field_pad_y;
+    const font_size = header.field_font;
+    const metrics = @import("app_draw.zig").fontMetrics(cr, font_size);
+    const baseline = area.y + (area.h - metrics.ascent - metrics.descent) / 2 + metrics.ascent;
+    const archive_icon = 16;
+    const archive_advance = archive_icon + 4;
+    const separator_width = 10;
+    const crumb_padding = 4;
     var ends: [128]usize = undefined;
     var labels: [128][]const u8 = undefined;
     var widths: [128]f64 = undefined;
@@ -52,45 +62,51 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
         count += 1;
         start = end;
     }
+    if (self.history.torrent) for (0..count) |i| if (ends[i] == self.history.archive_len) {
+        labels[i] = @import("app_torrent_browse.zig").crumbLabel(self, labels[i]);
+    };
     var total: f64 = 0;
     for (labels[0..count], 0..) |label, i| {
-        widths[i] = measureText(cr, label, shell_ui.textSize(), false) + 28 + @as(f64, if (ends[i] == self.history.archive_len) 22 else 0);
+        widths[i] = measureText(cr, label, font_size, false) + 2 * crumb_padding +
+            @as(f64, if (i + 1 < count) separator_width + 6 else 0) +
+            @as(f64, if (ends[i] == self.history.archive_len) archive_advance else 0);
         total += widths[i];
     }
     var first: usize = 0;
-    while (first + 1 < count and total > r.w - 16) : (first += 1) total -= widths[first];
+    while (first + 1 < count and total - crumb_padding > area.w) : (first += 1) total -= widths[first];
     if (target != null) {
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse return null;
         _ = ui_field.paintFrame(&layer.renderer, layer.local(), .{}, .{});
         layer.finish();
         c.cairo_save(cr);
-        c.cairo_rectangle(cr, r.x + 4, r.y, r.w - 8, r.h);
+        c.cairo_rectangle(cr, area.x - crumb_padding, r.y + pad_y, area.w + crumb_padding, r.h - 2 * pad_y);
         c.cairo_clip(cr);
     }
     defer if (target != null) c.cairo_restore(cr);
-    var x = r.x + 8;
+    var x = area.x - crumb_padding;
     for (first..count) |i| {
+        const right = @min(x + widths[i] - @as(f64, if (i + 1 < count) separator_width else 0), area.x + area.w);
         if (hit_x) |hit| {
-            if (hit >= x and hit < @min(x + widths[i] - 10, r.x + r.w - 8)) return .{ .path = path[0..ends[i]], .index = i };
+            if (hit >= x and hit < right) return .{ .path = path[0..ends[i]], .index = i };
         }
         if (target != null) {
             const alpha = self.breadcrumb_hover[i].frame.alpha;
             if (alpha > 0) {
-                roundedRect(cr, x, r.y + 4, @min(widths[i] - 10, r.x + r.w - 8 - x), r.h - 8, 5);
+                roundedRect(cr, x, r.y + pad_y, right - x, r.h - 2 * pad_y, 5);
                 setSource(cr, withAlpha(ui_theme.global.app_item_hover, alpha));
                 c.cairo_fill(cr);
             }
             setSource(cr, ui_theme.global.window_fg);
             const archive_crumb = ends[i] == self.history.archive_len;
             if (archive_crumb) {
-                if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(x + 4), .y = @floatCast(r.y + 10), .w = 18, .h = 18 })) |icon_layer| {
+                if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(x + crumb_padding), .y = @floatCast(r.y + (r.h - archive_icon) / 2), .w = archive_icon, .h = archive_icon })) |icon_layer| {
                     var layer = icon_layer;
-                    layer.renderer.drawIcon(0, 0, 18, 18, .{ .id = .folder, .color = ui_theme.global.window_fg });
+                    layer.renderer.drawIcon(0, 0, archive_icon, archive_icon, .{ .id = .folder, .color = ui_theme.global.window_fg });
                     layer.finish();
                 }
             }
-            drawText(cr, labels[i], x + 4 + @as(f64, if (archive_crumb) 22 else 0), r.y + 23, shell_ui.textSize(), false);
-            if (i + 1 < count) drawText(cr, "›", x + widths[i] - 20, r.y + 23, shell_ui.textSize(), false);
+            drawText(cr, labels[i], x + crumb_padding + @as(f64, if (archive_crumb) archive_advance else 0), baseline, font_size, false);
+            if (i + 1 < count) drawText(cr, "›", right + 2, baseline, font_size, false);
         }
         x += widths[i];
     }
@@ -109,16 +125,15 @@ pub fn sidebarFooter(self: *const App) i32 {
 }
 
 pub fn contentTop(self: *App) i32 {
-    if (self.transfer_view.active) return if (self.w < 500) 152 else 112;
     return header.height(self.w, self.inRepository()) + @import("app_audio_bar.zig").extraHeight(self);
 }
 
 pub fn viewTop(self: *App) i32 {
-    return self.contentTop() + if (self.list_view or self.transfer_view.active) @as(i32, 30) else 0;
+    return self.contentTop() + if (self.list_view) @as(i32, 30) else 0;
 }
 
 pub fn compactList(self: *App) bool {
-    return (self.list_view or self.transfer_view.active) and self.contentBottom() - self.viewTop() < 80;
+    return self.list_view and self.contentBottom() - self.viewTop() < 80;
 }
 
 pub fn itemInset(self: *App) i32 {
@@ -127,20 +142,20 @@ pub fn itemInset(self: *App) i32 {
 
 /// Outer left margin of the file rows; grid cards keep their wider gutter.
 pub fn itemLeftInset(self: *App) i32 {
-    return if (self.list_view and !self.transfer_view.active) 10 else 20;
+    return if (self.list_view) 10 else 20;
 }
 
 pub fn rowHeight(self: *App) i32 {
-    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 32 else if (self.list_view or self.transfer_view.active) 38 else GridCard.height + 8;
+    return if (self.compactList() or self.list_view) 32 else GridCard.height + 8;
 }
 
 pub fn cardHeight(self: *App) i32 {
-    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 30 else if (self.list_view or self.transfer_view.active) 36 else GridCard.height;
+    return if (self.compactList() or self.list_view) 30 else GridCard.height;
 }
 
 /// Text baseline of a list row, from the row's top.
 pub fn listBaseline(self: *App) f64 {
-    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 21 else 24;
+    return if (self.compactList() or self.list_view) 21 else 24;
 }
 
 pub fn sidebarTargetWidth(self: *App) i32 {
@@ -178,7 +193,9 @@ pub fn damageSidebarDivider(self: *App) void {
 }
 
 pub fn placeTargetStep(self: *App) i32 {
-    return if (self.h - self.contentTop() < 480) 32 else 40;
+    // Keep the sidebar's window-height breakpoints when the toolbar gets shorter.
+    const threshold: i32 = if (header.isNarrow(self.w, self.inRepository())) 632 else 592;
+    return if (self.h < threshold + @import("app_audio_bar.zig").extraHeight(self)) 32 else 40;
 }
 
 /// Moves `px` toward `target` along the panel slide curve; true when the
@@ -219,7 +236,7 @@ pub fn scrollbarGutter(self: *const App) i32 {
 }
 
 pub fn columns(self: *App) i32 {
-    return if (self.list_view or self.transfer_view.active) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), 210));
+    return if (self.list_view) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), GridCard.min_cell));
 }
 
 pub fn cellWidth(self: *App) i32 {
@@ -227,22 +244,11 @@ pub fn cellWidth(self: *App) i32 {
 }
 
 pub fn contentHeight(self: *App) i32 {
-    const count: i32 = if (self.transfer_view.active) blk: {
-        const has_file_operation = if (self.job_runner) |runner| blk2: {
-            const state = runner.pollProgress().state;
-            break :blk2 state == .running or
-                state == .paused or
-                state == .waiting_conflict;
-        } else false;
-
-        break :blk @as(i32, @intCast(self.torrents.items().len)) +
-            @as(i32, @intFromBool(has_file_operation));
-    } else @intCast(self.items.items.len);
+    const count: i32 = @intCast(self.items.items.len);
     return 2 * self.itemInset() + @divTrunc(count + self.columns() - 1, self.columns()) * self.rowHeight();
 }
 
 pub fn itemAt(self: *App, x: f64, y: f64) ?usize {
-    if (self.transfer_view.active) return null;
     const gx = @as(i32, @intFromFloat(x)) - self.sidebarWidth() - self.itemLeftInset();
     if (y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
     const gy = @as(i32, @intFromFloat(y)) - self.viewTop() - self.itemInset() + self.scroll_y;
@@ -255,7 +261,7 @@ pub fn itemAt(self: *App, x: f64, y: f64) ?usize {
 
 /// The repository the folder belongs to, whether or not Git View is on.
 pub fn foundRepository(self: *App) ?git.Repository {
-    if (self.chooser != null or self.transfer_view.active) return null;
+    if (self.chooser != null) return null;
     return if (self.snapshot) |snap| snap.repository else null;
 }
 
@@ -273,9 +279,7 @@ pub fn changedOnly(self: *App) bool {
 }
 
 pub fn columnLabels(self: *App) []const []const u8 {
-    const messages: []const i18n.Message = if (self.transfer_view.active)
-        &.{ i18n.msg("Name"), i18n.msg("Status"), i18n.msg("Progress"), i18n.msg("Download"), i18n.msg("Upload") }
-    else if (self.repository() != null)
+    const messages: []const i18n.Message = if (self.repository() != null)
         &.{ i18n.msg("Name"), i18n.msg("Git") }
     else if (self.isRecent())
         &.{ i18n.msg("Name"), i18n.msg("Size"), i18n.msg("Type"), i18n.msg("Opened"), i18n.msg("Permissions") }
@@ -297,9 +301,6 @@ pub fn columnMinimums(width: f64) [5]f64 {
 
 pub fn listWidths(self: *App) [5]f64 {
     const width: f64 = @floatFromInt(self.cellWidth() - 20);
-    if (self.transfer_view.active) {
-        return .{ width * 0.36, width * 0.25, width * 0.13, width * 0.13, width * 0.13 };
-    }
     if (self.repository() != null) {
         if (self.git_column_widths) |widths| return widths;
         const minimum = gitColumnMinimums(width);
@@ -331,7 +332,7 @@ pub fn listColumn(self: *App, column: usize) header.Rect {
 }
 
 pub fn columnBoundary(self: *App, x: f64, y: f64) ?usize {
-    if (self.transfer_view.active or !self.list_view or self.dialog != null or self.menu != null) return null;
+    if (!self.list_view or self.dialog != null or self.menu != null) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
     for (0..self.columnLabels().len - 1) |i| {
         const rect = self.listColumn(i);
@@ -380,9 +381,9 @@ pub fn sizeButtonRect(self: *App, idx: usize) ?header.Rect {
     } else {
         const width: f64 = @floatFromInt(cell - 20);
         return .{
-            .x = x + GridCard.padding_x - 4,
+            .x = x + GridCard.label_x - 4,
             .y = y + GridCard.detail_baseline - 15,
-            .w = @max(32, width - 2 * (GridCard.padding_x - 4)),
+            .w = @max(32, width - GridCard.label_x - GridCard.padding_x + 8),
             .h = 22,
         };
     }

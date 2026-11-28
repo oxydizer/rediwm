@@ -82,9 +82,8 @@ pub fn add(ctx: Context) Apps {
             torrents.addArg("-U_FORTIFY_SOURCE");
             torrents.addArg("-D_FORTIFY_SOURCE=3");
         }
-        inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
+        inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_session.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
         torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
-        torrents.addFileInput(b.path("src/platform/self_exe.h"));
         torrents.addFileInput(b.path("src/platform/peer.h"));
         torrents.addArg("-o");
         const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
@@ -101,6 +100,11 @@ pub fn add(ctx: Context) Apps {
         const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
         torrent_engine_test.step.dependOn(b.getInstallStep());
         test_torrents.dependOn(&torrent_engine_test.step);
+        // A torrent opened as a folder in a headless session.
+        const torrent_browse_test = b.addSystemCommand(&.{ "python3", "tests/files_torrent_browse.py" });
+        torrent_browse_test.step.dependOn(b.getInstallStep());
+        torrent_browse_test.step.dependOn(&torrent_engine_test.step);
+        test_torrents.dependOn(&torrent_browse_test.step);
     }
     files_step.dependOn(&install_files_desktop_entry.step);
     files_step.dependOn(&terminal_license.step);

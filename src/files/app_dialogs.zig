@@ -1,6 +1,7 @@
 //! Files dialogs: opening, confirming and keyboard handling of the modal cards.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -8,6 +9,8 @@ const c = @import("c.zig").api;
 const git = @import("git.zig");
 const ops_mod = @import("ops.zig");
 const icons = @import("../icon_cache.zig");
+const app_requests = @import("app_requests.zig");
+const app_transfers = @import("app_transfers.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
@@ -15,7 +18,45 @@ const trash_properties = @import("trash_properties.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const Dialog = @import("app_model.zig").Dialog;
 
+pub const ConflictAction = enum { skip, merge, rename, cancel };
+
+/// Conflict accelerators are deliberately Alt-only: bare letters remain
+/// available for normal typing and cannot resolve a conflict accidentally.
+pub fn conflictShortcut(sym: u32, alt: bool, can_merge: bool) ?ConflictAction {
+    if (!alt) return null;
+    return switch (sym) {
+        c.XKB_KEY_s, c.XKB_KEY_S => .skip,
+        c.XKB_KEY_m, c.XKB_KEY_M => if (can_merge) .merge else null,
+        c.XKB_KEY_r, c.XKB_KEY_R => .rename,
+        c.XKB_KEY_c, c.XKB_KEY_C => .cancel,
+        else => null,
+    };
+}
+
+/// The small modal's height: a service conflict has an "Apply to all" row.
+pub fn smallDialogHeight(self: *const App) f64 {
+    const dlg = self.dialog orelse return 130;
+    return if (dlg.kind == .conflict and dlg.service_conflict) 162 else 130;
+}
+
+/// Where the "Apply to all" checkbox of a service conflict sits.
+pub fn applyAllRect(self: *const App) @import("header.zig").Rect {
+    const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
+    const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
+    const dy = (@as(f64, @floatFromInt(self.h)) - smallDialogHeight(self)) / 2.0;
+    return .{ .x = dx + 16, .y = dy + 122, .w = dw - 32, .h = 24 };
+}
+
+pub fn toggleApplyAll(self: *App) void {
+    if (self.dialog) |*dlg| if (dlg.kind == .conflict and dlg.service_conflict) {
+        dlg.conflict_apply_all = !dlg.conflict_apply_all;
+        self.invalidate();
+    };
+}
+
 pub fn closeDialog(self: *App) void {
+    if (self.dialog) |open| if (open.service_conflict)
+        std.log.info("Files conflict dialog {d} closed", .{open.manager_conflict_id orelse 0});
     self.text_dragging = false;
     _ = self.dialog_surface.pointerMotion(null);
     self.edit_revision += 1;
@@ -23,23 +64,27 @@ pub fn closeDialog(self: *App) void {
         dlg.deletion.deinit();
         if (dlg.applications) |*apps| apps.deinit();
         if (dlg.properties) |*props| props.deinit();
-        if (dlg.trash_properties) |*props| props.deinit();
+        if (dlg.trash_properties) |*props| props.release(self.reaper);
         dlg.edit.text.deinit(self.allocator);
+        if (dlg.folder_selection) |selection| selection.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
+        if (dlg.conflict_destination) |path| self.allocator.free(path);
         self.dialog = null;
+        self.open_with_archive_paths = false;
         self.invalidate();
     }
 }
 
+/// The dialog opens when the service has read the item (`app_requests`).
 pub fn openProperties(self: *App, path: []const u8, preview: ?icons.Entry) void {
-    const state = properties.State.init(self.allocator, path, preview) catch {
-        self.setStatusNotice(tr("Could not read file properties"), true);
-        return;
-    };
-    self.closeDialog();
-    self.dialog = .{ .kind = .properties, .title = tr("Properties"), .properties = state };
-    self.invalidate();
+    if (app_requests.waiting(self, .properties)) return;
+    // `preview` is the icon cache's raster, borrowed: the request owns a copy.
+    const owned: ?icons.Entry = if (preview) |im|
+        if (self.allocator.dupe(u32, im.pixels)) |pixels| .{ .pixels = pixels, .size = im.size } else |_| null
+    else
+        null;
+    _ = app_requests.send(self, .{ .properties = .{ .path = path } }, .{ .properties = .{ .preview = owned } });
 }
 
 pub fn openSelectedProperties(self: *App) void {
@@ -73,7 +118,7 @@ pub fn propertiesAction(self: *App, action: properties.Action) void {
             self.closeDialog();
             if (folder) self.navigate(path) else {
                 if (changed) self.refresh();
-                self.openFile(path);
+                _ = self.openFile(path);
             }
         },
     }
@@ -108,7 +153,13 @@ pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
 }
 
 pub fn canOpenWith(self: *const App) bool {
-    if (self.history.archive_len > 0) return false;
+    if (self.history.archive_len > 0) {
+        if (!self.hasSelectedArchiveMembers()) return false;
+        for (self.items.items) |item| {
+            if (item.selected and !item.transfer_ghost and item.is_dir) return false;
+        }
+        return true;
+    }
     if (self.chooser != null) return false;
     var found = false;
     for (self.items.items) |item| {
@@ -121,27 +172,46 @@ pub fn canOpenWith(self: *const App) bool {
 
 pub fn openWithDialog(self: *App) void {
     if (!self.canOpenWith()) return;
+    if (self.history.archive_len > 0) {
+        self.startArchiveOpenWith() catch |err| {
+            self.setStatusNotice(
+                if (err == error.Busy)
+                    tr("A file operation is already running")
+                else
+                    tr("Could not load applications"),
+                true,
+            );
+        };
+        return;
+    }
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(self.allocator);
     for (self.items.items) |item| {
         if (item.selected and !item.transfer_ghost) paths.append(self.allocator, item.path) catch return;
     }
-    const state = open_with.State.init(self.allocator, paths.items) catch {
+    _ = self.openWithPaths(paths.items, false);
+}
+
+pub fn openWithPaths(self: *App, paths: []const []const u8, archive_paths: bool) bool {
+    const state = open_with.State.init(self.allocator, paths) catch {
         self.setStatusNotice(tr("Could not load applications"), true);
-        return;
+        return false;
     };
     self.closeDialog();
     self.dialog = .{ .kind = .open_with, .title = tr("Open With"), .applications = state };
+    self.open_with_archive_paths = archive_paths;
     self.invalidate();
+    return true;
 }
 
 pub fn openWithAction(self: *App, action: open_with.Action) void {
     switch (action) {
         .cancel => self.closeDialog(),
         .open => {
+            const archive_paths = self.open_with_archive_paths;
             if (self.dialog.?.applications.?.open()) {
                 const message = self.dialog.?.applications.?.message;
-                if (message.len == 0) {
+                if (message.len == 0 and !archive_paths) {
                     for (self.dialog.?.applications.?.apps.paths) |path| self.worker.recordOpened(path);
                 }
                 self.closeDialog();
@@ -302,32 +372,61 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.invalidate();
 }
 
+/// A service job's conflict, the head of the queue: `destination` is where
+/// the conflicting item would go.
+pub fn openServiceConflictDialog(self: *App, conflict_id: u64, job_id: u64, destination: []const u8, can_merge: bool) void {
+    if (self.dialog != null) return;
+    self.dialog = Dialog{
+        .kind = .conflict,
+        .title = tr("File Conflict"),
+        .conflict_name = self.allocator.dupe(u8, std.fs.path.basename(destination)) catch null,
+        .manager_conflict_id = conflict_id,
+        .service_conflict = true,
+        .conflict_can_merge = can_merge,
+        .conflict_destination = self.allocator.dupe(u8, destination) catch null,
+        .conflict_job_id = job_id,
+    };
+    self.invalidate();
+}
+
+/// Merge is offered for directory-onto-directory conflicts only.
+pub fn managerConflictCanMerge(self: *const App) bool {
+    const dlg = self.dialog orelse return false;
+    return dlg.service_conflict and dlg.conflict_can_merge;
+}
+
+/// Answers the conflict dialog through the service.
+pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
+    const dlg = self.dialog orelse return;
+    if (dlg.kind != .conflict) return;
+
+    if (dlg.service_conflict) {
+        const answer: @import("io_service.zig").ConflictAction = switch (action) {
+            .skip => .skip,
+            .merge => .merge,
+            .rename => .rename,
+            .cancel => .cancel,
+        };
+        if (dlg.conflict_apply_all and action != .cancel)
+            app_transfers.standFor(self, dlg.conflict_job_id, dlg.conflict_can_merge, answer);
+        if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", answer);
+    }
+
+    self.closeDialog();
+}
+
 pub fn confirmDialog(self: *App) void {
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
-        .transfers => {},
         .torrent_source, .torrent_destination => self.confirmTorrent(),
         .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
         .properties, .trash_properties => {},
+        .new_folder_from_selection => @import("app_folder_selection.zig").confirm(self, &dlg),
         .new_folder => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
-            ops_mod.createFolder(self.allocator, self.history.current, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("Folder already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    error.ReservedName => tr("Reserved folder name"),
-                    else => tr("Failed to create folder"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .create_folder = .{ .dir = self.history.current, .name = name } }, .create_folder);
             self.closeDialog();
-            self.setStatusNotice(tr("Folder created"), false);
-            self.refresh();
         },
         .new_branch => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
@@ -337,62 +436,28 @@ pub fn confirmDialog(self: *App) void {
         },
         .new_file => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
-            ops_mod.createFile(self.allocator, self.history.current, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("File already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    error.ReservedName => tr("Reserved file name"),
-                    else => tr("Failed to create file"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .create_file = .{ .dir = self.history.current, .name = name } }, .create_file);
             self.closeDialog();
-            self.setStatusNotice(tr("File created"), false);
-            self.refresh();
         },
         .rename => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             const target = dlg.target_path orelse "";
-            ops_mod.renameItem(self.allocator, target, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("Target name already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    else => tr("Failed to rename"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .rename = .{ .target = target, .name = name } }, .rename);
             self.closeDialog();
-            self.setStatusNotice(tr("Renamed successfully"), false);
-            self.refresh();
         },
         .trash_confirm => {
             self.executeDeletion();
             self.closeDialog();
         },
         .conflict => {
-            if (self.job_runner) |runner| {
-                runner.resolveConflict(.skip);
-            }
-            self.closeDialog();
+            self.resolveConflictDialog(.skip);
         },
+        .quit_jobs => @import("app_quit.zig").choose(self, .keep),
     }
 }
 
 pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     var dlg = &(self.dialog orelse return);
-    if (dlg.kind == .transfers) {
-        self.transfersKey(sym);
-        return;
-    }
-
     if (dlg.kind == .properties) {
         const action = self.dialog.?.properties.?.key(sym, self.shift, self.w, self.h);
         self.propertiesAction(action);
@@ -411,20 +476,21 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
         self.deleteAction(self.dialog.?.deletion.key(sym));
         return;
     }
+    if (dlg.kind == .quit_jobs) {
+        if (sym == c.XKB_KEY_Escape) @import("app_quit.zig").choose(self, .cancel);
+        if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter) @import("app_quit.zig").choose(self, .keep);
+        return;
+    }
     if (dlg.kind == .conflict) {
-        if (sym == c.XKB_KEY_s or sym == c.XKB_KEY_S) {
-            if (self.job_runner) |runner| runner.resolveConflict(.skip);
-            self.closeDialog();
-            return;
-        } else if (sym == c.XKB_KEY_r or sym == c.XKB_KEY_R) {
-            if (self.job_runner) |runner| runner.resolveConflict(.rename);
-            self.closeDialog();
-            return;
-        } else if (sym == c.XKB_KEY_c or sym == c.XKB_KEY_C or sym == c.XKB_KEY_Escape) {
-            if (self.job_runner) |runner| runner.resolveConflict(.cancel);
-            self.closeDialog();
+        if (self.alt and (sym == c.XKB_KEY_a or sym == c.XKB_KEY_A)) {
+            toggleApplyAll(self);
             return;
         }
+        if (conflictShortcut(sym, self.alt, self.managerConflictCanMerge())) |action| {
+            self.resolveConflictDialog(action);
+            return;
+        }
+        if (sym == c.XKB_KEY_Escape) self.resolveConflictDialog(.cancel);
         return;
     }
 

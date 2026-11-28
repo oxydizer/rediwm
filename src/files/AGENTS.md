@@ -14,7 +14,12 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
 `app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
-`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`. Shared enums and
+`app_buttons` (presses and releases: dialog, menu, chrome, file view), `app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`,
+`app_service` and `app_requests` (the window's side of the I/O service:
+deletion jobs, and requests whose replies finish an action later),
+`app_transfers` (copies and moves), `app_archives` (extracting, opening a
+member, exporting members; the window holds handed-over staging as a service
+resource and gives it back through `StagingLease`). Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
 group file plus an alias line in `App`; a file that calls a sibling's
@@ -26,6 +31,68 @@ The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
 the portal's `wayland:` parent handle (xdg-foreign v2) and marks itself its
 modal dialog (xdg-dialog, portal `modal`) before the first commit
 (`attachToParent`); the imported object must live as long as the window.
+
+The process can hold several windows (`main.zig` `open_windows`, at most
+`max_windows`) on one Wayland connection, so the compositor sees one client and
+a folder tab can move between them. `client_lifecycle.zig` makes, steps, polls
+and destroys a window: each has its own `Client`, `App` and listing worker and
+shares the display, the process's I/O service and its reaper. A closing window
+never joins a thread: its listing worker, folder-size pool, thumbnail workers and
+Trash count are stopped and handed to `reaper.zig`, which joins them in order on
+its own thread (the listing worker goes last; the Trash count writes its wake
+fd). A new per-window helper thread gets a non-waiting `requestStop` and goes
+through `reaper.retire` too. Anything that
+touches a user path (stat, realpath, mkdir, rename, chmod, restore, delete) goes
+to the service as a job or a request; the window never waits for it. The seat reports every surface of the
+connection, so pointer, keyboard, text-input and drag events are filtered by
+surface (keys by `focused`). `app_tabs.zig` `take` and `adopt` move a tab, with
+its history, between windows; tear-off and drop requests reach the event loop as
+`App.tear_tab` and the strip's `drop_on`; "New Window" is `App.new_window`.
+
+## One process per display (S6)
+
+`io_endpoint.zig` (wire format in `io_endpoint_wire.zig`) makes Files single
+instance per Wayland display. `run` first `claim`s
+`$XDG_RUNTIME_DIR/files-io-<hash of WAYLAND_DISPLAY>.sock` under its `.lock`
+file: if a process answers, the launch is sent as an NDJSON `OpenWindow`
+(folder, file to select, `--torrent`, `XDG_ACTIVATION_TOKEN`)
+and this process exits; else it binds the socket and serves it on the endpoint
+thread. A chooser never claims: it answers on its own stdout. The endpoint thread never touches the Service, a window or the
+display; accepted launches go to the UI thread through a single-producer ring
+and a wake fd (`takeOpen`, `openRequested` in `main.zig`). With no window
+left, the process stays while the coordinator has work (`Service.isWorkIdle`,
+cleared by every queued command and set by the coordinator each pass), so a
+launch opens a window that shows the running jobs; when idle it stops serving
+first, opens what was accepted before that, then ends.
+
+The same socket serves the shell's Transfers panel (S6b):
+* `Subscribe` makes the connection an external consumer of the job table
+  (`io_endpoint_subscribers.zig`, `Service.registerExternal`, at most
+  `max_external_consumers`). It gets a `snapshot` event (live jobs, each with
+  its 1 Hz speed history), then `jobs` events with each changed record by
+  cursor (`removed` marks a retirement). The endpoint polls
+  `Service.externalWakeFd`, which every table write signals.
+* A subscriber that stops reading stops its own cursor: nothing is fetched
+  past 64 KiB unsent. A resync from the table becomes a fresh snapshot. More
+  than 1 MiB unsent, or 30 s without taking any, disconnects it.
+* `PauseJob`, `ResumeJob` and `CancelJob` (`job_id`) go through
+  `Service.sendControl` into a small external control queue, taken before the
+  windows' queues, routed with window id 0. They answer `JOB_NOT_FOUND` or
+  `INVALID_STATE` (ended) at once; otherwise the record shows the outcome.
+* The endpoint thread reaches only the Service: never the Manager, a window
+  or the display.
+
+## Folder views
+
+Grid or list, the sort and folders-first belong to the folder, not the window
+or tab (`folder_views.zig`, `app_folder_views.zig`). Entering a folder
+(`applyHistoryNav`) applies its remembered view; changing one of the three
+calls `recordFolderView`, which keeps only what differs from the defaults
+(grid/list and sort from `preferences.zig`, folders-first from the compositor
+config's `files_folders_first`, set in Control Center). One store per process
+is shared by every window; a window shows another's change in `sync`. The
+store's own thread writes `$XDG_STATE_HOME/rediwm/files-folder-views`; the
+UI never waits for it. A repository's forced list view is not recorded.
 
 ## Terminal drawer
 
@@ -112,9 +179,11 @@ composition silently stops after a window switch.
 
 ## Trash
 
-* **Moving in stays on `gio trash`** (`ops.trashItems`, which knows the
-  per-volume rules) and so does Empty Trash (`gio trash --empty`, followed by
-  `trash.sweepOrphans`). Everything else on the home trash is native in
+* **Moving in stays on `gio trash`** (which knows the per-volume rules) and
+  so does Empty Trash (`gio trash --empty`, followed by `trash.sweepOrphans`).
+  Both, Delete and deleting from the Trash view are I/O service jobs
+  (`io_deletion.zig` on its workers, `app_service.zig` in the window): the
+  window never waits for `rm` or `gio`. Everything else on the home trash is native in
   `trash.zig`: restore, permanent delete, `.trashinfo` parsing and the
   `directorysizes` line. Tests build fixture trash directories, no `gio`.
 * **Home trash only.** Per-volume trashes (`$topdir/.Trash-$uid`) are neither
@@ -259,22 +328,49 @@ control bytes are refused because terminal paste would alter them.
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
 * The sidebar's Trash row (`trashDropAt`, `trash_drop` outline) takes
-  *move* only, like the dock's Trash: `trashDropped` runs `ops.trashItems`
+  *move* only, like the dock's Trash: `trashDropped` starts a `trash` job
   with no dialog and skips what is in the Trash already. Copy-only sources
   (Files' Trash view, most browsers) are refused. `tests/files_drag.py --trash`.
 
 ## BitTorrent transfers
 
-`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
+`app_torrents.zig` owns the helper connection and adding a torrent or magnet
+(`enabled` turns torrents on or off as a whole); downloads show in the shell's
+Transfers panel, not in Files;
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
-owns libtorrent, persistent resume data, StatusNotifierItem and its D-Bus menu;
-its parts are `helper_transfers`, `helper_peers` and `helper_tray.cpp`, sharing
+owns libtorrent and persistent resume data, and has no tray icon of its own;
+its parts are `helper_transfers`, `helper_peers` and `helper_session.cpp`, sharing
 `helper.hpp` (everything in `namespace helper`; new state shared between parts
 is an `inline` variable there, state of one part stays `static` in it).
 The helper survives Files closing; no torrent state belongs to a window.
 See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 
+* **Downloads are jobs.** `io_torrent_bridge.zig` is the process's own
+  connection to the helper, on the UI thread (`main.zig`, the poll slot after
+  the endpoint's), mirroring each torrent into the job table as a `download`
+  with ids from `torrent_job_base`: fetching the list is `planning`, files to
+  choose `queued` with `choose_files`, a finished download that shares
+  `seeding`, a stopped one completes and retires. Windows' job models skip
+  downloads (they list torrents from their own connection); the endpoint's
+  subscribers, the shell's panel, see them. Pause, resume and cancel
+  (`remove`, keeping payload) of a download go to `Service.torrent_controls`
+  instead of the coordinator. It never starts the helper: it connects at
+  start and once a window has. With no window, the process stays headless
+  while the helper downloads or seeds (`Bridge.active`).
+
+* **A torrent is a folder.** `app_torrent_browse.zig` shows a torrent's
+  files as rows: the location is the `.torrent` path (a magnet's: its
+  destination folder plus the transfer id) with the folder inside after it,
+  and `History.torrent` marks that prefix the way `archive_len` marks an
+  archive's, so archive guards (no file operations, drags, folder sizes)
+  hold. Nothing is scanned: `inspect` lists a torrent file without adding
+  it, `files` a download's files with `wanted` and `done`, both replies to
+  the asking connection only (`torrents.Client.reply`). The tree logic is
+  `torrent_tree.zig`. A tick sends `select` (or `add` with `files`, the first
+  time); replies to `files` requests sent before a tick carry the old ticks
+  and are skipped for them (`Browse.stale`). Progress updates rows in place;
+  only a changed file list rebuilds them.
 * The socket is `files-transfers.sock`, deliberately outside `rediwm-*.sock`
   compositor discovery. Both ends check peer credentials; runtime/state are
   private. Use the system C++ compiler to match libtorrent's distro ABI.
@@ -294,7 +390,8 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 * Idle releases the engine after pending resume writes drain. UI subscribers
   can remain attached without torrent worker timers. Last subscriber leaving
   exits a stopped helper; active downloads/seeding keep it alive.
-* `zig build test-files-torrents` uses a private bus, temporary state and a
+* `zig build test-files-torrents` (the helper, then `tests/files_torrent_browse.py`
+  driving Files in a headless session) uses a private bus, temporary state and a
   noninstalled loopback network shim. Never fetch public torrents in tests.
 
 ## Audio toolbar

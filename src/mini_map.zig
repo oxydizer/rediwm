@@ -48,7 +48,7 @@ fn blocked(server: *Server) bool {
     return server.greeter_mode or server.locker != null or server.polkit_dialog != null or
         server.screenshot_selector.output != null or server.switcher.active() or
         server.input.open_start_menu != null or
-        server.input.open_power_menu != null or server.input.open_wifi != null or server.input.open_battery != null or server.input.open_calendar != null;
+        server.input.open_power_menu != null or server.input.open_wifi != null or server.input.open_transfers != null or server.input.open_battery != null or server.input.open_calendar != null;
 }
 
 pub fn show(self: *Self, server: *Server, x: f64, y: f64) void {

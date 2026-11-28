@@ -76,47 +76,6 @@ pub fn drawProgressBar(
     c.cairo_fill(cr);
 }
 
-/// A subtle individual surface for compact transfer entries in the sidebar.
-pub fn drawSidebarTransferSurface(cr: *c.cairo_t, area: anytype) void {
-    if (area.w <= 0 or area.h <= 0) return;
-    roundedRect(cr, area.x, area.y, area.w, area.h, 7);
-    setSource(cr, withAlpha(ui_theme.global.app_item_hover, 0.12));
-    c.cairo_fill_preserve(cr);
-    setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), 0.12));
-    c.cairo_set_line_width(cr, 1);
-    c.cairo_stroke(cr);
-}
-
-/// Shared compact row for file and torrent transfers.
-pub fn drawTransferProgressRow(
-    cr: *c.cairo_t,
-    area: anytype,
-    label: []const u8,
-    fraction: ?f64,
-    foreground: [4]f32,
-    accent: [4]f32,
-    size: f64,
-) void {
-    var percent_buf: [32]u8 = undefined;
-    const percent_text = if (fraction) |value|
-        std.fmt.bufPrint(&percent_buf, "{d}%", .{@as(u64, @intFromFloat(@min(1.0, @max(0.0, value)) * 100))}) catch ""
-    else
-        "—";
-
-    setSource(cr, foreground);
-    drawEllipsis(cr, label, area.x + 12, area.y + 19, area.w - 112, size, false);
-    drawText(cr, percent_text, area.x + area.w - 88, area.y + 19, size, true);
-    drawProgressBar(
-        cr,
-        area.x + 12,
-        area.y + area.h - 9,
-        area.w - 24,
-        fraction,
-        withAlpha(foreground, 0.14),
-        accent,
-    );
-}
-
 pub fn drawSpinner(cr: *c.cairo_t, cx: f64, cy: f64, r: f64) void {
     const angle = @as(f64, @floatFromInt(@mod(nowMs(), 1000))) / 1000.0 * 2.0 * std.math.pi;
     c.cairo_save(cr);

@@ -256,6 +256,7 @@ fn processMotion(input: *Input, time_msec: u32, focus_follows_mouse: bool) void 
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
+    input.drag_tab_hover.motion();
     input.updateDockReveal();
     if (input.server.screenshot_selector.output != null) {
         input.server.screenshot_selector.motion(input.cursor.x, input.cursor.y);
@@ -497,6 +498,14 @@ fn passthroughMotion(input: *Input, time_msec: u32, focus_follows_mouse: bool) v
             }
         },
         .wifi_popup => |res| {
+            input.hovered_resize_edges = null;
+            input.clearTaskbarHover();
+            input.setHover(null, null);
+            input.setDefaultCursor();
+            res.popup.motion(res.sx, res.sy);
+            input.seat.pointerClearFocus();
+        },
+        .transfers_popup => |res| {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
             input.setHover(null, null);

@@ -397,6 +397,7 @@ pub fn applyRegion(server: *Server) void {
             if (output.power_menu) |menu| menu.refreshCapabilities();
             if (output.battery_popup) |popup| popup.refresh();
             if (output.wifi_popup) |popup| popup.refresh();
+            if (output.transfers_popup) |popup| popup.refresh();
             output.dock.invalidate();
         }
     }

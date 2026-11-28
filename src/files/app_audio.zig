@@ -101,7 +101,7 @@ pub fn playAudio(self: *App, path: []const u8) bool {
 }
 
 fn audioItem(self: *App, index: usize) bool {
-    if (self.audio_link == null or self.transfer_view.active or index >= self.items.items.len) return false;
+    if (self.audio_link == null or index >= self.items.items.len) return false;
     const item = self.items.items[index];
     return !item.is_dir and !item.is_broken and !item.missing and canPreviewAudio(self, item.path);
 }

@@ -8,6 +8,7 @@ test {
     _ = @import("effects/resize_mesh.zig");
     _ = @import("effects/resize_follow.zig");
     _ = @import("calculator/model.zig");
+    _ = @import("transfers/popup_tests.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
     _ = @import("scroll_layout.zig");

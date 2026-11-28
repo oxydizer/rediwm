@@ -1,9 +1,8 @@
 //! Files item painting: grid and list rows, icons and thumbnails.
 
 const std = @import("std");
+const torrent_browse = @import("app_torrent_browse.zig");
 const App = @import("app.zig").App;
-const ops = @import("ops.zig");
-const ui_profile = @import("ui_profile.zig");
 const c = @import("c.zig").api;
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
@@ -28,6 +27,9 @@ const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
 const itemType = App.itemType;
 
+/// Strength of the size, type and date text next to a name.
+const metadata_alpha: f32 = 0.6;
+
 /// Transfer ghost filenames stay subdued until the manifest confirms completion.
 fn filenameForeground(item: ViewItem) [4]f32 {
     if (item.transfer_ghost and !item.is_dir) {
@@ -42,60 +44,22 @@ fn filenameForeground(item: ViewItem) [4]f32 {
 }
 
 /// Live byte count for the file currently being copied.
-fn currentTransferBytes(item: ViewItem, progress: ?ops.ProgressInfo) ?i64 {
-    if (!item.transfer_ghost or item.is_dir) {
-        return null;
-    }
-
+fn currentTransferBytes(item: ViewItem) ?i64 {
+    if (!item.transfer_ghost or item.is_dir) return null;
     if (item.transfer_state == .pending) return 0;
     if (item.transfer_state != .copying) return null;
-
-    const current = progress orelse return null;
-    if ((current.state != .running and current.state != .paused) or
-        current.current_file_path_len == 0 or
-        !std.mem.eql(
-            u8,
-            current.current_file_path[0..current.current_file_path_len],
-            item.path,
-        ))
-    {
-        return null;
+    if (item.transfer_bytes) |bytes| {
+        return @intCast(@min(bytes, @as(u64, std.math.maxInt(i64))));
     }
-
-    return @intCast(@min(
-        current.current_file_bytes,
-        @as(u64, std.math.maxInt(i64)),
-    ));
+    return null;
 }
 
 pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const accent = ui_theme.shellPalette().accent;
-    const job_progress = if (self.job_runner) |runner| runner.pollProgress() else null;
     const cols = self.columns();
     const cell = self.cellWidth();
     const first = @divTrunc(self.scroll_y, self.rowHeight()) * cols;
     const last = @min(@as(i32, @intCast(self.items.items.len)), (@divTrunc(self.scroll_y + viewport_h, self.rowHeight()) + 1) * cols);
-    var progress_arena = std.heap.ArenaAllocator.init(self.allocator);
-    defer progress_arena.deinit();
-    var directory_progress: []?f64 = &.{};
-    if (self.job_runner) |runner| {
-        const count: usize = @intCast(last - first);
-        const scratch = progress_arena.allocator();
-        if (scratch.alloc([]const u8, count)) |paths| {
-            for (paths, 0..) |*path, offset| {
-                const item = self.items.items[@as(usize, @intCast(first)) + offset];
-                path.* = if (item.is_dir and !item.is_symlink) item.path else "";
-            }
-            if (scratch.alloc(?f64, count)) |results| {
-                if (scratch.alloc(bool, count)) |matched| {
-                    const lookup_started = ui_profile.start();
-                    runner.progressForPaths(paths, results, matched) catch {};
-                    ui_profile.finish(lookup_started, "progress_render_lookup", count);
-                    directory_progress = results;
-                } else |_| {}
-            } else |_| {}
-        } else |_| {}
-    }
     // The hover glide sits under every item, since mid-glide it straddles two.
     const glide = self.item_hover.frame;
     if (glide.alpha > 0) {
@@ -130,29 +94,21 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             }
         }
+        var file_fraction: ?f64 = null;
+        if (item.transfer_total_bytes) |total| {
+            if (total > 0) {
+                file_fraction = @min(
+                    1.0,
+                    @as(f64, @floatFromInt(item.transfer_bytes orelse 0)) /
+                        @as(f64, @floatFromInt(total)),
+                );
+            }
+        }
         var ghost_alpha: f64 = 0.20;
         if (item.transfer_ghost and !item.is_dir) {
-            if (job_progress) |progress| {
-                if ((progress.state == .running or progress.state == .paused) and
-                    progress.current_file_path_len > 0 and
-                    progress.current_file_size > 0 and
-                    std.mem.eql(
-                        u8,
-                        progress.current_file_path[0..progress.current_file_path_len],
-                        item.path,
-                    ))
-                {
-                    const fraction = @min(
-                        1.0,
-                        @as(f64, @floatFromInt(progress.current_file_bytes)) /
-                            @as(f64, @floatFromInt(progress.current_file_size)),
-                    );
-                    const step = @min(
-                        @as(usize, 10),
-                        @as(usize, @intFromFloat(fraction * 10.0)),
-                    );
-                    ghost_alpha = 0.20 + @as(f64, @floatFromInt(step)) * 0.08;
-                }
+            if (file_fraction) |fraction| {
+                const step = @min(@as(usize, 10), @as(usize, @intFromFloat(fraction * 10.0)));
+                ghost_alpha = 0.20 + @as(f64, @floatFromInt(step)) * 0.08;
             }
         }
         if (cut) c.cairo_push_group(cr);
@@ -164,49 +120,37 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             c.cairo_pop_group_to_source(cr);
             c.cairo_paint_with_alpha(cr, ghost_alpha);
         }
-        if (job_progress) |progress| {
-            if ((progress.state == .running or progress.state == .paused) and
-                progress.current_file_path_len > 0 and
-                progress.current_file_size > 0 and
-                std.mem.eql(u8, progress.current_file_path[0..progress.current_file_path_len], item.path))
-            {
-                const fraction = @min(
-                    1.0,
-                    @as(f64, @floatFromInt(progress.current_file_bytes)) /
-                        @as(f64, @floatFromInt(progress.current_file_size)),
-                );
+        if (file_fraction) |fraction| {
+            const ring_size = @min(26.0, icon.w);
+            shell_ui.drawProgressRing(cr, .{
+                .x = icon.x + (icon.w - ring_size) / 2,
+                .y = icon.y + (icon.w - ring_size) / 2,
+                .w = ring_size,
+                .h = ring_size,
+            }, fraction, accent);
+        }
+        if (item.is_dir and !item.is_symlink) {
+            if (item.transfer_progress) |progress| {
                 const ring_size = @min(26.0, icon.w);
                 shell_ui.drawProgressRing(cr, .{
                     .x = icon.x + (icon.w - ring_size) / 2,
                     .y = icon.y + (icon.w - ring_size) / 2,
                     .w = ring_size,
                     .h = ring_size,
-                }, fraction, accent);
+                }, progress, accent);
             }
         }
-        if (item.is_dir and !item.is_symlink) {
-            const progress_index: usize = @intCast(index - first);
-            if (progress_index < directory_progress.len) {
-                if (directory_progress[progress_index]) |progress| {
-                    const ring_size = @min(26.0, icon.w);
-                    shell_ui.drawProgressRing(cr, .{
-                        .x = icon.x + (icon.w - ring_size) / 2,
-                        .y = icon.y + (icon.w - ring_size) / 2,
-                        .w = ring_size,
-                        .h = ring_size,
-                    }, progress, accent);
-                }
-            }
-        }
-        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
+        const check_inset = torrent_browse.listInset(self);
+        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) + check_inset else GridCard.label_x);
         setSource(cr, filenameForeground(item));
-        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
+        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - check_inset - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else gridLabelWidth(self, width);
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
         var buf: [64]u8 = undefined;
         var size_buf: [64]u8 = undefined;
-        const transfer_bytes = currentTransferBytes(item, job_progress);
+        // An unticked file of a torrent shows its size, not the nothing it has.
+        const transfer_bytes = if (torrent_browse.active(self) and item.transfer_state == .pending) null else currentTransferBytes(item);
         const disp = if (item.transfer_stub)
             App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false }
         else if (transfer_bytes) |bytes|
@@ -214,13 +158,16 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         else
             self.itemSizeDisplay(item, &size_buf);
         const is_size_hovered = (self.hoverKey() == 2_000_000 + idx);
+        // Sizes, types and dates are quieter than the name; the hovered dash
+        // and the clickable permission bits keep full strength.
+        const metadata = withAlpha(ui_theme.global.window_fg, metadata_alpha);
         if (self.list_view and self.repository() != null) {
             self.renderGitStatus(cr, item, y);
         } else if (self.list_view) {
             const sz = self.listColumn(1);
             if (disp.is_running) {
                 const text_w = @max(0.0, sz.w - 24);
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, disp.text, sz.x + 4, y + baseline, text_w, shell_ui.textSize(), false);
                 drawSpinner(cr, sz.x + sz.w - 10, y + baseline - 4, 4.5);
             } else if (item.is_dir and !item.is_symlink and is_size_hovered and std.mem.eql(u8, disp.text, "—")) {
@@ -230,17 +177,18 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 setSource(cr, ui_theme.global.window_fg);
                 drawEllipsis(cr, "—", sz.x + 8, y + baseline, sz.w - 12, shell_ui.textSize(), false);
             } else {
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, disp.text, sz.x + 4, y + baseline, sz.w - 8, shell_ui.textSize(), false);
             }
-            setSource(cr, ui_theme.global.window_fg);
+            setSource(cr, metadata);
             const ty = self.listColumn(2);
             drawEllipsis(cr, if (item.transfer_stub) @import("i18n").tr("Download") else itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
             const mt = self.listColumn(3);
-            const timestamp = if (item.transfer_stub) "—" else @import("app_kit").settings.dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
+            const virtual = item.transfer_stub or torrent_browse.active(self);
+            const timestamp = if (virtual) "—" else @import("app_kit").settings.dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
             drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
             const permissions = self.listColumn(4);
-            if (item.transfer_stub or item.transfer_ghost) {
+            if (virtual or item.transfer_ghost) {
                 drawEllipsis(cr, "—", permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
             } else {
                 const mode = formatPermissions(item.mode);
@@ -281,11 +229,11 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             // The transfer accessory occupies the grid card's detail line.
         } else {
             if (item.is_symlink) {
-                setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, itemType(item), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                setSource(cr, metadata);
+                drawEllipsis(cr, itemType(item), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             } else if (item.is_dir) {
                 if (disp.is_running) {
-                    setSource(cr, ui_theme.global.window_fg);
+                    setSource(cr, metadata);
                     drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                     const tw = measureText(cr, disp.text, shell_ui.textSize(), false);
                     drawSpinner(cr, label_x + tw + 10, y + GridCard.detail_baseline - 4, 4.5);
@@ -296,15 +244,16 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                     setSource(cr, ui_theme.global.window_fg);
                     drawText(cr, "—", label_x + 2, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 } else {
-                    setSource(cr, ui_theme.global.window_fg);
+                    setSource(cr, metadata);
                     drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 }
             } else {
-                setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                setSource(cr, metadata);
+                drawEllipsis(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             }
         }
         self.renderInlineTorrent(cr, idx);
+        torrent_browse.renderCheck(self, cr, idx);
         self.renderAudioButton(cr, idx);
         if (cut) {
             c.cairo_pop_group_to_source(cr);
@@ -349,11 +298,10 @@ test "transfer ghost filenames stay muted until manifest completion" {
     try std.testing.expectEqual(normal, filenameForeground(item));
 }
 
-test "transfer ghost byte display follows pending and matching live file progress" {
-    const path = "/destination/file.txt";
+test "transfer ghost byte display follows pending and live entry progress" {
     var item: ViewItem = .{
         .name = "file.txt",
-        .path = path,
+        .path = "/destination/file.txt",
         .is_dir = false,
         .is_symlink = false,
         .is_broken = false,
@@ -362,61 +310,58 @@ test "transfer ghost byte display follows pending and matching live file progres
         .icon_name = "text-x-generic",
         .transfer_ghost = true,
         .transfer_state = .pending,
+        .transfer_bytes = 384,
     };
 
     // A pending ghost must not advertise bytes that have not arrived.
-    try std.testing.expectEqual(@as(?i64, 0), currentTransferBytes(item, null));
-
-    var progress: ops.ProgressInfo = .{ .state = .running };
-    @memcpy(progress.current_file_path[0..path.len], path);
-    progress.current_file_path_len = path.len;
-    progress.current_file_bytes = 384;
-    progress.current_file_size = 4096;
-
+    try std.testing.expectEqual(@as(?i64, 0), currentTransferBytes(item));
     item.transfer_state = .copying;
-    try std.testing.expectEqual(@as(?i64, 384), currentTransferBytes(item, progress));
-
-    // A different active path must never leak its byte count into this ghost.
-    const other_path = "/destination/other.txt";
-    @memcpy(progress.current_file_path[0..other_path.len], other_path);
-    progress.current_file_path_len = other_path.len;
-    try std.testing.expect(currentTransferBytes(item, progress) == null);
-
-    // Pausing preserves the current file's visible byte count.
-    @memcpy(progress.current_file_path[0..path.len], path);
-    progress.current_file_path_len = path.len;
-    progress.state = .paused;
-    progress.current_file_bytes = 512;
-    try std.testing.expectEqual(@as(?i64, 512), currentTransferBytes(item, progress));
+    try std.testing.expectEqual(@as(?i64, 384), currentTransferBytes(item));
 
     // Counters larger than the ViewItem's signed size representation clamp.
-    progress.current_file_bytes = std.math.maxInt(u64);
-    try std.testing.expectEqual(
-        @as(?i64, std.math.maxInt(i64)),
-        currentTransferBytes(item, progress),
-    );
+    item.transfer_bytes = std.math.maxInt(u64);
+    try std.testing.expectEqual(@as(?i64, std.math.maxInt(i64)), currentTransferBytes(item));
 
-    // Finished jobs and completed entries use the normal filesystem size.
-    progress.state = .finished;
-    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    // Completed entries, directories and ordinary files use the normal size.
     item.transfer_state = .completed;
-    progress.state = .running;
-    try std.testing.expect(currentTransferBytes(item, progress) == null);
-
-    // Directories and ordinary files never consume per-file ghost progress.
+    try std.testing.expect(currentTransferBytes(item) == null);
     item.transfer_state = .copying;
     item.is_dir = true;
-    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    try std.testing.expect(currentTransferBytes(item) == null);
     item.is_dir = false;
     item.transfer_ghost = false;
-    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    try std.testing.expect(currentTransferBytes(item) == null);
+}
+
+test "transfer ghost byte display falls back to refreshed Manager progress" {
+    const item: ViewItem = .{
+        .name = "file.txt",
+        .path = "/destination/file.txt",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 4096,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .copying,
+        .transfer_bytes = 768,
+    };
+
+    try std.testing.expectEqual(@as(?i64, 768), currentTransferBytes(item));
+}
+
+/// Room for a grid card's name and detail line, right of its icon; a torrent's
+/// checkbox takes the card's top right corner. `card_w` is the card's width.
+fn gridLabelWidth(self: *App, card_w: f64) f64 {
+    return @max(0, card_w - GridCard.label_x - GridCard.padding_x - torrent_browse.gridCheckRoom(self));
 }
 
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
     if (self.inlineTorrentHit(self.mouse_x, self.mouse_y) != null or self.audioButtonHit(self.mouse_x, self.mouse_y) != null) return;
     const index = self.itemAt(self.mouse_x, self.mouse_y) orelse return;
     const name = self.items.items[index].text();
-    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 - self.inlineTorrentWidth(index) - self.audioButtonWidth(index) else @as(f64, @floatFromInt(self.cellWidth() - 62));
+    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 - self.inlineTorrentWidth(index) - self.audioButtonWidth(index) else gridLabelWidth(self, @floatFromInt(self.cellWidth() - 20));
     if (measureText(cr, name, shell_ui.textSize(), false) <= available) return;
     const width = @min(@as(f64, @floatFromInt(self.w - 24)), @max(180, measureText(cr, name, shell_ui.textSize(), false) + 20));
     var lines: [32][]const u8 = undefined;
@@ -450,7 +395,7 @@ pub fn itemIconRect(self: *App, index: i32) header.Rect {
     const cols = self.columns();
     const size: f64 = if (self.list_view) 24 else GridCard.icon_size;
     return .{
-        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else GridCard.padding_x) - self.horizontalOffset(),
+        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) + torrent_browse.listInset(self) else GridCard.padding_x) - self.horizontalOffset(),
         .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.list_view) @as(f64, @floatFromInt(self.cardHeight() - 24)) / 2 else GridCard.padding_top),
         .w = size,
         .h = size,
