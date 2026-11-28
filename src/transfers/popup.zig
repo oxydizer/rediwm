@@ -241,7 +241,11 @@ pub const Popup = struct {
                 c.openWindow(home(), null);
                 return self.output.closeTransfers();
             },
-            .clear_done => return c.clearDone(),
+            .clear_done => {
+                if (c.model.liveJobs().len == 0)
+                    self.output.closeTransfers();
+                return c.clearDone();
+            },
         }
         self.refresh();
     }
