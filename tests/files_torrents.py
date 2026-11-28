@@ -100,6 +100,7 @@ def run():
         subprocess.run(['cc', '-shared', '-fPIC', str(ROOT / 'tests/torrent_network.c'), '-o', str(shim), '-ldl'], check=True)
         env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_STATE_HOME=str(tmp/'state'),
                    XDG_DATA_HOME=str(tmp/'data'), HOME=str(tmp), LD_PRELOAD=str(shim))
+        env['REDIWM_TORRENT_TEST_DELETE'] = '1'
         binary = Path(os.environ.get('REDIWM_TEST_BIN_DIR', ROOT/'zig-out/bin'))/'rediwm-transfers'
         log = open(tmp/'helper.log', 'w+')
         helper = None
@@ -219,6 +220,52 @@ def run():
             rows=client.until(lambda r:r if r else None,'magnet added again',30)
             assert not client.error, client.error
             client.send(op='remove',id=rows[0]['id']); client.until(lambda r:not r,'remove magnet again')
+
+            # Exercise deletion without removing any payload.
+            probe_dest = tmp/'delete-probe'
+            probe_dest.mkdir()
+            client.send(op='add', source=str(torrent_path),
+                        destination=str(probe_dest))
+            rows = client.until(lambda r: r if r else None,
+                                'pending deletion fixture')
+            probe = rows[0]
+            assert probe['pending'] and probe['paused'], probe
+            probe_id = probe['id']
+            probe_storage = Path(probe['storage'])
+            marker = probe_storage/'preserve-me'
+            marker.write_bytes(b'untouched')
+            client.error = ''
+            client.send(op='probe_delete', id=probe_id)
+            rows = client.until(
+                lambda r: r if r and r[0]['deletion_phase'] in
+                ('ready', 'failed') else None,
+                'pending deletion disk barrier')
+            assert rows[0]['deletion_phase'] == 'ready', rows
+            assert rows[0]['paused'], rows
+            assert marker.read_bytes() == b'untouched'
+            assert torrent_path.exists()
+            assert not client.error, client.error
+            print('PASS: pending torrent deletion disk barrier')
+
+            # A durable deletion intent must prevent automatic restart.
+            client.close()
+            helper.kill()
+            helper.wait(timeout=5)
+            helper = launch()
+            client = Client(runtime)
+            rows = client.until(lambda r: r if r else None,
+                                'interrupted deletion restored')
+            assert rows[0]['id'] == probe_id, rows
+            assert rows[0]['deletion_phase'] == 'failed', rows
+            assert rows[0]['paused'], rows
+            assert 'interrupted' in rows[0]['error'], rows
+            client.send(op='resume', id=probe_id)
+            client.until(lambda _: 'deletion' in client.error,
+                         'interrupted deletion cannot resume')
+            assert marker.read_bytes() == b'untouched'
+            assert torrent_path.exists()
+            print('PASS: interrupted deletion cannot restart')
+
             client.close()
             helper.wait(timeout=12)
             print('PASS: inspection, file selection and reselection, real transfer, background lifetime, crash recovery, magnet metadata, seeding, persistence, pause/resume, removal and no-clobber publication')

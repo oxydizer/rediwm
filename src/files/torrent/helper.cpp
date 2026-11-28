@@ -235,6 +235,7 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
       if (t->deletion_phase == DeletionPhase::waiting_disk &&
           lt::alert_cast<lt::cache_flushed_alert>(alert)) {
         t->deletion_phase = DeletionPhase::ready;
+        t->handle = {};
         continue;
       }
 

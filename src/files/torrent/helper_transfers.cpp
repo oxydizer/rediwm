@@ -319,6 +319,28 @@ std::string command(JsonObject *o) {
   if (t.deleting())
     throw std::runtime_error("Torrent deletion is in progress");
 
+  if (op == "probe_delete") {
+    // Only the isolated integration harness may exercise this unfinished
+    // lifecycle. It never removes payload or transfer registration.
+    if (!getenv("REDIWM_TORRENT_TEST_DELETE"))
+      throw std::runtime_error("Unknown command");
+    t.deletion_mode = DeletionMode::permanent;
+    t.deletion_phase = DeletionPhase::waiting_storage;
+    t.deletion_probe = true;
+    try {
+      persist(t);
+    } catch (...) {
+      t.deletion_mode = DeletionMode::none;
+      t.deletion_phase = DeletionPhase::none;
+      t.deletion_probe = false;
+      throw;
+    }
+    t.resume_after_publish = false;
+    t.start_after_priority = false;
+    advance_deletion(t);
+    return {};
+  }
+
   if (op == "remove") {
     session->remove_torrent(t.handle); // Never delete payloads.
     fs::remove(state_dir + "/" + id + ".ini");

@@ -37,6 +37,20 @@ static std::string encode(JsonBuilder *b) {
   g_object_unref(b);
   return result;
 }
+
+static char const *deletion_phase_name(DeletionPhase phase) {
+  switch (phase) {
+  case DeletionPhase::none: return "none";
+  case DeletionPhase::waiting_storage: return "waiting_storage";
+  case DeletionPhase::waiting_pause: return "waiting_pause";
+  case DeletionPhase::waiting_flush: return "waiting_flush";
+  case DeletionPhase::waiting_disk: return "waiting_disk";
+  case DeletionPhase::ready: return "ready";
+  case DeletionPhase::failed: return "failed";
+  }
+  return "unknown";
+}
+
 std::string snapshot() {
   auto b = json_builder_new();
   json_builder_begin_object(b);
@@ -47,6 +61,8 @@ std::string snapshot() {
     auto info = t.info();
     json_builder_begin_object(b);
     member(b, "id", id);
+    if (getenv("REDIWM_TORRENT_TEST_DELETE"))
+      member(b, "deletion_phase", deletion_phase_name(t.deletion_phase));
     member(b, "name",
            s.name.empty() ? "Fetching file list…" : display_name(s.name));
     member(b, "source", t.source);

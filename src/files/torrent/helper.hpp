@@ -69,6 +69,7 @@ struct Transfer {
   std::vector<lt::download_priority_t> cached_priorities;
   DeletionMode deletion_mode = DeletionMode::none;
   DeletionPhase deletion_phase = DeletionPhase::none;
+  bool deletion_probe = false;
 
   bool deleting() const {
     return deletion_phase != DeletionPhase::none;
