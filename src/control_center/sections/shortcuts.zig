@@ -106,6 +106,8 @@ const CommandEditor = struct {
 const InlineCommand = struct {
     id: []const u8,
     original: []const u8,
+    is_new: bool = false,
+    deleted: bool = false,
     data: ui.layout.TextInputData,
     widget: ?*W = null,
 
@@ -122,7 +124,8 @@ const InlineCommand = struct {
     }
 
     fn isDirty(entry: *const InlineCommand) bool {
-        return !std.mem.eql(
+        if (entry.deleted) return false;
+        return (entry.is_new and entry.current().value.len > 0) or !std.mem.eql(
             u8,
             entry.original,
             entry.current().value,
@@ -197,6 +200,7 @@ pub const Section = struct {
     command_field: W = .{ .kind = .container },
     command_field_visible: bool = false,
     inline_commands: std.ArrayList(*InlineCommand) = .empty,
+    inline_focus: ?[]const u8 = null,
     collapsed: [names.len]bool = @splat(false),
     targets: std.ArrayList(Target) = .empty,
     editing: ?Target = null,
@@ -244,6 +248,18 @@ pub const Section = struct {
         return entry;
     }
 
+    fn createInlineCommand(
+        s: *Section,
+        config: *const Config,
+    ) !*InlineCommand {
+        const id = try nextCommandId(gpa, config, s);
+        defer gpa.free(id);
+
+        const entry = try s.inlineCommand(id, "");
+        entry.is_new = true;
+        return entry;
+    }
+
     fn saveInlineCommand(
         cc: *panel.ControlCenter,
         entry: *InlineCommand,
@@ -251,10 +267,13 @@ pub const Section = struct {
         if (!entry.isDirty()) return;
 
         const config = &cc.server.config;
-        const current = config.shortcut_commands.get(entry.id) orelse
-            return error.CommandChanged;
-        if (!std.mem.eql(u8, current, entry.original))
-            return error.CommandChanged;
+        const current = config.shortcut_commands.get(entry.id);
+        if (entry.is_new) {
+            if (current != null) return error.CommandChanged;
+        } else {
+            if (!std.mem.eql(u8, current orelse return error.CommandChanged, entry.original))
+                return error.CommandChanged;
+        }
 
         const value = entry.current().value;
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -275,6 +294,7 @@ pub const Section = struct {
 
         gpa.free(entry.original);
         entry.original = original;
+        entry.is_new = false;
     }
 
     pub fn commitInline(
@@ -324,6 +344,10 @@ pub const Section = struct {
     }
 
     pub fn focusedInlineId(s: *Section, focused: ?*W) ?[]const u8 {
+        if (s.inline_focus) |id| {
+            s.inline_focus = null;
+            return id;
+        }
         const widget = focused orelse return null;
         for (s.inline_commands.items) |entry| {
             if (widget == entry.widget) return entry.id;
@@ -473,7 +497,7 @@ pub const Section = struct {
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         const a = arena.allocator();
-        const id = editor.id orelse try nextCommandId(a, config);
+        const id = editor.id orelse try nextCommandId(a, config, s);
         if (editor.original) |original| {
             const current = config.shortcut_commands.get(id) orelse return error.CommandChanged;
             if (!std.mem.eql(u8, current, original)) return error.CommandChanged;
@@ -484,13 +508,17 @@ pub const Section = struct {
     }
 };
 
-fn nextCommandId(a: std.mem.Allocator, config: *const Config) ![]const u8 {
+fn nextCommandId(a: std.mem.Allocator, config: *const Config, s: *const Section) ![]const u8 {
     var n: usize = 1;
     while (true) : (n += 1) {
         var buf: [32]u8 = undefined;
         const id = try std.fmt.bufPrint(&buf, "command-{d}", .{n});
         const action: keys.Action = .{ .custom_command = id };
         if (config.shortcut_commands.contains(id)) continue;
+        const reserved = for (s.inline_commands.items) |entry| {
+            if (std.mem.eql(u8, entry.id, id)) break true;
+        } else false;
+        if (reserved) continue;
         for ([_][]const keys.Keybind{ config.keybinds, config.workspace_keybinds }) |binds| {
             for (binds) |bind| {
                 if (keys.actionEql(bind.action, action)) break;
@@ -514,6 +542,17 @@ fn children(a: std.mem.Allocator, values: []const W) ![]W {
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     for (s.inline_commands.items) |entry| {
         entry.capture();
+    }
+    var index: usize = 0;
+    while (index < s.inline_commands.items.len) {
+        const entry = s.inline_commands.items[index];
+        if (entry.deleted) {
+            _ = s.inline_commands.orderedRemove(index);
+            entry.deinit();
+            gpa.destroy(entry);
+        } else {
+            index += 1;
+        }
     }
     _ = s.arena.reset(.retain_capacity);
     s.targets = .empty;
@@ -539,7 +578,14 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     const effective = try a.alloc(keys.Keybind, indices.len);
     for (effective, indices) |*bind, i| bind.* = binds[i];
     const commands = &cc.server.config.shortcut_commands;
-    const actions = try catalogue.actions(a, mode, effective, commands.keys());
+    var command_ids: std.ArrayList([]const u8) = .empty;
+    try command_ids.appendSlice(a, commands.keys());
+    for (s.inline_commands.items) |entry| {
+        if (entry.is_new and !commands.contains(entry.id)) {
+            try command_ids.append(a, entry.id);
+        }
+    }
+    const actions = try catalogue.actions(a, mode, effective, command_ids.items);
     const labels = try a.alloc([]const u8, effective.len);
     for (labels, effective) |*label, bind| label.* = saving.format(a, bind) catch i18n.tr("Unknown key");
     const search = try searchField(s, cc);
@@ -570,7 +616,16 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             if (catalogue.group(action) != g) continue;
             var title_buf: [1024]u8 = undefined;
             var desc_buf: [8192]u8 = undefined;
-            const command = if (action == .custom_command) commands.get(action.custom_command) else null;
+            const command = if (action == .custom_command)
+                commands.get(action.custom_command) orelse blk: {
+                    for (s.inline_commands.items) |entry| {
+                        if (entry.is_new and std.mem.eql(u8, entry.id, action.custom_command))
+                            break :blk @as([]const u8, "");
+                    }
+                    break :blk null;
+                }
+            else
+                null;
             if (command) |value| {
                 _ = try s.inlineCommand(action.custom_command, value);
             }
@@ -787,6 +842,11 @@ fn appendSlotRow(
             .alternate => "shortcut_alternate",
         };
         chip.width = .{ .fixed = if (cc.panel_box.width < 660) 112 else 156 };
+        if (action_target.action == .custom_command and
+            !cc.server.config.shortcut_commands.contains(action_target.action.custom_command))
+        {
+            chip.kind.button.state = .disabled;
+        }
         if (editing) {
             chip.kind.button.variant = .primary;
             recorder = id;
@@ -797,11 +857,11 @@ fn appendSlotRow(
     const reset_id = s.targets.items.len;
     try s.targets.append(a, action_target);
     var restore = if (action_target.action == .custom_command)
-        button(cc, reset_id, i18n.tr("Edit command"), .edit, editCommand)
+        button(cc, reset_id, i18n.tr("Delete command"), .close, deleteInlineCommand)
     else
         button(cc, reset_id, i18n.tr("Restore factory bindings"), .refresh, resetClicked);
     if (action_target.action == .custom_command) {
-        restore.name = "edit_command";
+        restore.name = "delete_command";
     } else {
         restore.name = "reset_shortcut";
         if (!reset) restore.kind.button.state = .disabled;
@@ -984,7 +1044,53 @@ fn openCommand(cc: *panel.ControlCenter, id: ?[]const u8) !void {
 
 fn addCommand(p: ?*anyopaque, _: usize) void {
     const cc = owner(p);
-    openCommand(cc, null) catch return;
+    const s = &cc.shortcuts;
+    const entry = s.createInlineCommand(&cc.server.config) catch return;
+    s.cancel();
+    s.inline_focus = entry.id;
+    s.collapsed[catalogue.group(.{ .custom_command = "" })] = false;
+    if (s.search_field.kind == .text_input) {
+        const field = &s.search_field.kind.text_input;
+        field.value = gpa.realloc(field.value, 0) catch unreachable;
+        field.cursor_pos = 0;
+        field.selection_anchor = null;
+    }
+    s.search_focus = false;
+    cc.refresh();
+}
+
+fn deleteInlineCommand(p: ?*anyopaque, i: usize) void {
+    const cc = owner(p);
+    const s = &cc.shortcuts;
+    const target = s.targets.items[i];
+    if (target.action != .custom_command) return;
+
+    const id = target.action.custom_command;
+    const config = &cc.server.config;
+    for (s.inline_commands.items) |entry| {
+        if (entry.deleted) continue;
+        if (!std.mem.eql(u8, entry.id, id)) continue;
+
+        if (entry.is_new) {
+            if (config.shortcut_commands.contains(id)) return;
+        } else {
+            _ = target.resolve(config) catch return;
+            saving.saveCustomCommand(gpa, cc.server.io, config, id, null) catch {
+                s.message = i18n.tr("Could not delete command");
+                cc.refresh();
+                return;
+            };
+        }
+
+        const persisted = !entry.is_new;
+        s.inline_focus = null;
+        s.cancel();
+        entry.deleted = true;
+        if (persisted)
+            @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
+        cc.refresh();
+        return;
+    }
 }
 
 fn editCommand(p: ?*anyopaque, i: usize) void {
