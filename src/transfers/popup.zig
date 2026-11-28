@@ -241,8 +241,10 @@ pub const Popup = struct {
                 c.openWindow(home(), null);
                 return self.output.closeTransfers();
             },
-            // Clearing may hide the item, which closes this panel.
-            .clear_done => return c.clearDone(),
+            .clear_done => {
+                self.output.closeTransfers();
+                return c.clearDone();
+            },
         }
         self.refresh();
     }

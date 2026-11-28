@@ -286,6 +286,7 @@ def run(scale, theme=None):
                 clear = find("clear_done")
                 ipc.click_at(*clear)
                 wait_for(lambda: not items()[1]["transfers"]["visible"], "the item to hide once cleared")
+                wait_for(lambda: ipc.hit_test(*point)["target_type"] != "transfers_popup", "the panel to close once cleared")
         finally:
             if fake:
                 fake.close()
