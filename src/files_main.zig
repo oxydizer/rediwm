@@ -63,8 +63,15 @@ fn resolveTarget(allocator: std.mem.Allocator, environ: std.process.Environ, tar
     }
     defer allocator.free(path_to_check);
 
-    // Resolve relative path against cwd if necessary
-    const resolved = try std.fs.path.resolve(allocator, &.{path_to_check});
+    // Resolve before the launch can be handed to a process with a different cwd.
+    var cwd_buf: [4096]u8 = undefined;
+    const resolved = if (std.fs.path.isAbsolute(path_to_check))
+        try std.fs.path.resolve(allocator, &.{path_to_check})
+    else blk: {
+        const cwd = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return error.CurrentDirectoryUnavailable;
+        const cwd_path = std.mem.span(@as([*:0]const u8, @ptrCast(cwd)));
+        break :blk try std.fs.path.resolve(allocator, &.{ cwd_path, path_to_check });
+    };
     errdefer allocator.free(resolved);
 
     var zpath_buf: [4096]u8 = undefined;

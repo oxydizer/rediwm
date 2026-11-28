@@ -82,10 +82,10 @@ fi
         env.pop('REDIWM_SOCKET', None)
 
         processes = []
-        def start(binary, args=(), **extra):
+        def start(binary, args=(), *, cwd=None, **extra):
             log = (tmp / (binary + '.log')).open('w')
             cmd = [str(ROOT / 'zig-out/bin' / binary)] + list(args)
-            p = subprocess.Popen(cmd, env=dict(env, **extra), stdout=log, stderr=log)
+            p = subprocess.Popen(cmd, cwd=cwd, env=dict(env, **extra), stdout=log, stderr=log)
             log.close()
             processes.append(p)
             return p
@@ -122,8 +122,7 @@ fi
 
             display = next(p.name for p in tmp.glob('wayland-*') if not p.name.endswith('.lock'))
 
-            # Launch rediwm-files with browse_dir
-            client = start('rediwm-files', [str(browse_dir)], WAYLAND_DISPLAY=display)
+            client = start('rediwm-files', ['.'], cwd=browse_dir, WAYLAND_DISPLAY=display)
 
             # Wait for window to appear
             def find_window():
@@ -323,7 +322,7 @@ fi
             # Opening a file path reveals it in its parent folder. Enter acts
             # on that selection without a preliminary click or arrow key.
             opened_marker.unlink()
-            start('rediwm-files', [str(browse_dir / 'sample.txt')], WAYLAND_DISPLAY=display)
+            start('rediwm-files', ['sample.txt'], cwd=browse_dir, WAYLAND_DISPLAY=display)
             selected_win = wait_for(find_window, 'file-path window did not appear')
             assert selected_win['title'] == f'{browse_dir.name} — RediWM Files'
             action('focus_window', {'id': selected_win['id']})
