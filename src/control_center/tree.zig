@@ -64,7 +64,11 @@ pub fn buildTree(cc: *ControlCenter) void {
     }
     cc.search.capture();
     const shortcut_search_focus = cc.shortcuts.search_focus or ui.input.current.focused == &cc.shortcuts.search_field;
-    const shortcut_inline_focus = cc.shortcuts.focusedInlineId(ui.input.current.focused);
+    const shortcut_inline_focus = if (cc.shortcuts.focusedInlineId(ui.input.current.focused)) |id|
+        gpa.dupe(u8, id) catch null
+    else
+        null;
+    defer if (shortcut_inline_focus) |id| gpa.free(id);
     cc.shortcuts.search_focus = false;
     if (cc.search.empty() != cc.search.built_empty) {
         if (cc.search.empty()) {

@@ -98,6 +98,8 @@ const InlineCommand = struct {
     deleted: bool = false,
     data: ui.layout.TextInputData,
     widget: ?*W = null,
+    control_center: ?*panel.ControlCenter = null,
+    validation_error: ?[]const u8 = null,
 
     fn capture(entry: *InlineCommand) void {
         if (entry.widget) |widget| {
@@ -142,7 +144,9 @@ const InlineCommand = struct {
     }
 
     fn changed(ctx: ?*anyopaque, _: usize, _: []const u8) void {
-        const cc: *panel.ControlCenter = @ptrCast(@alignCast(ctx orelse return));
+        const entry: *InlineCommand = @ptrCast(@alignCast(ctx orelse return));
+        entry.validation_error = null;
+        const cc = entry.control_center orelse return;
         if (cc.shortcut_autosave_timer) |timer| {
             timer.timerUpdate(2000) catch {};
         }
@@ -173,6 +177,14 @@ const InlineCommand = struct {
         gpa.free(entry.current().value);
     }
 };
+
+fn inlineErrorMessage(err: anyerror) []const u8 {
+    return switch (err) {
+        error.InvalidCommand => i18n.tr("Invalid command"),
+        error.CommandChanged => i18n.tr("Command changed externally"),
+        else => i18n.tr("Could not save command"),
+    };
+}
 
 pub const Section = struct {
     // Callback targets live with their widget tree. Recording spans rebuilds
@@ -291,16 +303,12 @@ pub const Section = struct {
             if (!entry.isDirty()) return true;
 
             saveInlineCommand(cc, entry) catch |err| {
-                s.message = switch (err) {
-                    error.InvalidCommand => i18n.tr("Invalid command"),
-                    error.CommandChanged => i18n.tr("Command changed externally"),
-                    else => i18n.tr("Could not save command"),
-                };
+                entry.validation_error = inlineErrorMessage(err);
                 cc.refresh();
                 return true;
             };
 
-            s.message = "";
+            entry.validation_error = null;
             @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
             cc.refresh();
             return true;
@@ -310,26 +318,19 @@ pub const Section = struct {
 
     pub fn autosaveInline(s: *Section, cc: *panel.ControlCenter) void {
         var saved = false;
-        var failure: ?[]const u8 = null;
+        var failure = false;
         for (s.inline_commands.items) |entry| {
             if (!entry.isDirty()) continue;
             saveInlineCommand(cc, entry) catch |err| {
-                failure = switch (err) {
-                    error.InvalidCommand => i18n.tr("Invalid command"),
-                    error.CommandChanged => i18n.tr("Command changed externally"),
-                    else => i18n.tr("Could not save command"),
-                };
+                entry.validation_error = inlineErrorMessage(err);
+                failure = true;
                 continue;
             };
+            entry.validation_error = null;
             saved = true;
             @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
         }
-        if (failure) |message| {
-            s.message = message;
-        } else if (saved) {
-            s.message = "";
-        }
-        if (saved or failure != null) cc.refresh();
+        if (saved or failure) cc.refresh();
     }
 
     pub fn focusedInlineId(s: *Section, focused: ?*W) ?[]const u8 {
@@ -339,6 +340,7 @@ pub const Section = struct {
         }
         const widget = focused orelse return null;
         for (s.inline_commands.items) |entry| {
+            if (entry.deleted) continue;
             if (widget == entry.widget) return entry.id;
         }
         return null;
@@ -346,6 +348,7 @@ pub const Section = struct {
 
     pub fn visibleInlineField(s: *Section, id: []const u8) ?*W {
         for (s.inline_commands.items) |entry| {
+            if (entry.deleted) continue;
             if (std.mem.eql(u8, entry.id, id))
                 return entry.widget;
         }
@@ -497,7 +500,10 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     var index: usize = 0;
     while (index < s.inline_commands.items.len) {
         const entry = s.inline_commands.items[index];
-        if (entry.deleted) {
+        const obsolete = !entry.is_new and
+            !entry.isDirty() and
+            !cc.server.config.shortcut_commands.contains(entry.id);
+        if (entry.deleted or obsolete) {
             _ = s.inline_commands.orderedRemove(index);
             entry.deinit();
             gpa.destroy(entry);
@@ -530,7 +536,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     var command_ids: std.ArrayList([]const u8) = .empty;
     try command_ids.appendSlice(a, commands.keys());
     for (s.inline_commands.items) |entry| {
-        if (entry.is_new and !commands.contains(entry.id)) {
+        if ((entry.is_new or entry.isDirty()) and !commands.contains(entry.id)) {
             try command_ids.append(a, entry.id);
         }
     }
@@ -568,7 +574,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             const command = if (action == .custom_command)
                 commands.get(action.custom_command) orelse blk: {
                     for (s.inline_commands.items) |entry| {
-                        if (entry.is_new and std.mem.eql(u8, entry.id, action.custom_command))
+                        if ((entry.is_new or entry.isDirty()) and std.mem.eql(u8, entry.id, action.custom_command))
                             break :blk @as([]const u8, "");
                     }
                     break :blk null;
@@ -724,22 +730,24 @@ fn appendSlotRow(
             action_target.action.custom_command,
             action_target.command.?,
         );
+        entry.control_center = cc;
         var data = entry.data;
-        data.owner = cc;
-        const fields = try children(a, &.{
-            .{
-                .name = "shortcut_command",
-                .kind = .{ .text_input = data },
-                .width = .{ .percent = 1 },
-                .height = .{ .fixed = 36 },
-            },
+        data.owner = entry;
+        var fields: std.ArrayList(W) = .empty;
+        try fields.append(a, .{
+            .name = "shortcut_command",
+            .kind = .{ .text_input = data },
+            .width = .{ .percent = 1 },
+            .height = .{ .fixed = 36 },
         });
-        entry.widget = &fields[0];
+        if (entry.validation_error) |message|
+            try fields.append(a, text(message, true));
+        entry.widget = &fields.items[0];
         try controls.append(a, .{
             .kind = .container,
             .direction = .column,
             .width = .{ .flex = 1 },
-            .children = fields,
+            .children = fields.items,
         });
     } else {
         try controls.append(a, .{
@@ -963,9 +971,10 @@ fn deleteInlineCommand(p: ?*anyopaque, i: usize) void {
         if (entry.deleted) continue;
         if (!std.mem.eql(u8, entry.id, id)) continue;
 
+        const exists = config.shortcut_commands.contains(id);
         if (entry.is_new) {
             if (config.shortcut_commands.contains(id)) return;
-        } else {
+        } else if (exists) {
             _ = target.resolve(config) catch return;
             saving.saveCustomCommand(gpa, cc.server.io, config, id, null) catch {
                 s.message = i18n.tr("Could not delete command");
@@ -974,7 +983,7 @@ fn deleteInlineCommand(p: ?*anyopaque, i: usize) void {
             };
         }
 
-        const persisted = !entry.is_new;
+        const persisted = !entry.is_new and exists;
         s.inline_focus = null;
         s.cancel();
         entry.deleted = true;
