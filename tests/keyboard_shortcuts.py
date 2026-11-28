@@ -267,15 +267,30 @@ def run():
                 click("Cancel")
                 assert (tmp / "rediwm-config.toml").read_text() == before_reset
                 click("Restore factory bindings", beside="Close Window")
-                assert has("Super+c" if workspace_mode else "Super+q")
+                close_key = "c" if workspace_mode else "q"
+                close_chord = f"Super+{close_key}"
+                assert has(close_chord)
                 assert not has("Super+F12")
                 assert custom in (tmp / "rediwm-config.toml").read_text()
-                click("Super+f")
+                click("Add shortcut", beside="Super+f")
                 chord("F12")
+                time.sleep(.15)
                 click("Save shortcut")
+                click("Unassign shortcut", beside=close_chord)
+                click("Super+f")
+                chord(close_key)
+                time.sleep(.15)
+                click("Save shortcut")
+                assert mode_bindings()[close_chord] == "toggle_fullscreen"
+                before_conflict = config_path.read_text()
+                click("Restore factory bindings", beside="Close Window")
+                assert has("A factory shortcut is in use. Unassign it before resetting.")
+                assert config_path.read_text() == before_conflict
                 click("Reset All Shortcuts")
                 click("Reset built-in shortcuts")
-                assert has("Super+f") and not has("Super+F12")
+                assert mode_bindings()[close_chord] == "close_window"
+                assert mode_bindings()["Super+f"] == "toggle_fullscreen"
+                assert "Super+F12" not in mode_bindings()
                 assert custom in (tmp / "rediwm-config.toml").read_text()
 
                 find_shortcut("printf hello")
@@ -309,6 +324,28 @@ def run():
                 assert mode_bindings()["Super+F12"] == action
                 chord("F12")
                 expect_command_output("quoted value|two words|;")
+
+                find_shortcut("Close Window")
+                click("Unassign shortcut", beside=close_chord)
+                find_shortcut("python3")
+                click("Super+F12")
+                chord(close_key)
+                time.sleep(.15)
+                click("Save shortcut")
+                assert mode_bindings()[close_chord] == action
+                before_conflict = config_path.read_text()
+                click("Reset All Shortcuts")
+                click("Reset built-in shortcuts")
+                assert has("A factory shortcut is in use. Unassign it before resetting.")
+                assert config_path.read_text() == before_conflict
+                click(close_chord)
+                chord("F12")
+                time.sleep(.15)
+                click("Save shortcut")
+                click("Reset All Shortcuts")
+                click("Reset built-in shortcuts")
+                assert mode_bindings()[close_chord] == "close_window"
+                assert mode_bindings()["Super+F12"] == action
 
                 click("Edit command", beside=managed)
                 click("shortcut_command")

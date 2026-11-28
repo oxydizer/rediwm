@@ -76,11 +76,13 @@ pub fn canReset(binds: []const keys.Keybind, defaults: []const keys.Keybind, tar
 
 fn resetChanges(a: std.mem.Allocator, binds: []const keys.Keybind, defaults: []const keys.Keybind, target: ?keys.Action) ![]const keys.Keybind {
     var changes: std.ArrayList(keys.Keybind) = .empty;
+    // Reserve the factory chords before dropping obsolete bindings. Occupants
+    // in the reset scope are moved or removed by the same replacement.
     for (defaults) |bind| {
         if (!selected(bind.action, target)) continue;
         if (find(binds, bind)) |current| {
             if (keys.actionEql(current.action, bind.action)) continue;
-            if (current.action != .noop) return error.ShortcutConflict;
+            if (current.action != .noop and !selected(current.action, target)) return error.ShortcutConflict;
         }
         try changes.append(a, bind);
     }
@@ -453,4 +455,42 @@ test "reset checks factory conflicts and keeps unrelated bindings" {
     try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+q\" = \"spawn printf hello\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+F12\" = \"close_window\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+f\" = \"toggle_fullscreen\" # keep unrelated") != null);
+}
+
+test "global reset frees built-in chords and protects custom shortcuts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bind = struct {
+        fn make(key: []const u8, action: keys.Action) !keys.Keybind {
+            const spec = try keys.parseKeybind(key);
+            return .{ .modifiers = spec.modifiers, .sym = spec.sym, .action = action };
+        }
+    }.make;
+    const close = try bind("Super+q", .close_window);
+    const fullscreen = try bind("Super+f", .toggle_fullscreen);
+    const defaults = [_]keys.Keybind{ close, fullscreen };
+    const extra = try bind("Super+F12", .close_window);
+    const legacy = try bind("Alt+F11", .{ .spawn = "printf hello" });
+    const managed = try bind("Alt+F12", .{ .custom_command = "demo" });
+    var current = [_]keys.Keybind{
+        try bind("Super+q", .toggle_fullscreen),
+        try bind("Super+f", .close_window),
+        extra,
+        legacy,
+        managed,
+    };
+
+    const changes = try resetChanges(a, &current, &defaults, null);
+    try std.testing.expectEqual(keys.Action.close_window, find(changes, close).?.action);
+    try std.testing.expectEqual(keys.Action.toggle_fullscreen, find(changes, fullscreen).?.action);
+    try std.testing.expectEqual(keys.Action.noop, find(changes, extra).?.action);
+    try std.testing.expect(find(changes, legacy) == null);
+    try std.testing.expect(find(changes, managed) == null);
+    try std.testing.expectError(error.ShortcutConflict, resetChanges(a, &current, &defaults, .close_window));
+
+    for ([_]keys.Action{ legacy.action, managed.action }) |custom| {
+        current[0].action = custom;
+        try std.testing.expectError(error.ShortcutConflict, resetChanges(a, &current, &defaults, null));
+    }
 }
