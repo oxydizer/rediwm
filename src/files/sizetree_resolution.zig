@@ -170,14 +170,14 @@ pub fn resolvePath(svc: *Service, job: Job) bool {
     if (info.kind != .directory) return resolved(svc, job, null, false);
     const key: Key = .{ .dev = info.dev, .ino = info.ino };
     const identity: DevicePolicyCache.Identity = .{ .dev = info.dev, .mount_id = platform.mounts.idOfFd(fd) };
-    svc.lock();
+    svc.lockAt(@src());
     const known = svc.auto.get(identity);
     const active = current(svc, job);
     svc.unlock();
     if (!active) return false;
     const auto = known orelse blk: {
         const result = svc.policy(@intCast(info.dev >> 32), @truncate(info.dev), identity.mount_id);
-        svc.lock();
+        svc.lockAt(@src());
         if (current(svc, job)) svc.auto.put(identity, result);
         svc.unlock();
         break :blk result orelse false;
@@ -186,7 +186,7 @@ pub fn resolvePath(svc: *Service, job: Job) bool {
 }
 
 pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
-    svc.lock();
+    svc.lockAt(@src());
     defer svc.unlock();
     if (!current(svc, job)) return false;
     const entry = job.entry;

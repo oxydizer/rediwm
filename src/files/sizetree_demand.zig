@@ -85,7 +85,7 @@ pub const Owner = struct {
     fn release(self: *Owner, keep_stopped: bool) void {
         const storage = self.storage orelse return;
         const svc = self.service;
-        svc.lock();
+        svc.lockAt(@src());
         defer svc.unlock();
         var it = storage.records.iterator();
         while (it.next()) |item| {
@@ -127,7 +127,7 @@ pub const Owner = struct {
     pub fn endViewport(self: *Owner) void {
         const storage = self.storage orelse return;
         const svc = self.service;
-        svc.lock();
+        svc.lockAt(@src());
         defer svc.unlock();
         var i: usize = 0;
         while (i < storage.visible.items.len) {
@@ -207,7 +207,7 @@ pub fn request(svc: *Service, owner: *Owner, path: []const u8, level: Level, opt
 /// False means registration ran out of memory and the view may retry.
 pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level, options: tree.RequestOptions) bool {
     std.debug.assert(owner.service == svc);
-    svc.lock();
+    svc.lockAt(@src());
     defer svc.unlock();
     // A new entry may be eligible if its owner registration fails.
     defer path_cache.maintain(svc);
@@ -276,7 +276,7 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
 pub fn stopPath(svc: *Service, owner: *Owner, path: []const u8) void {
     std.debug.assert(owner.service == svc);
     const storage = owner.storage orelse return;
-    svc.lock();
+    svc.lockAt(@src());
     defer svc.unlock();
     const entry = svc.paths.get(path) orelse return;
     const record = storage.records.getPtr(entry) orelse return;
@@ -293,7 +293,7 @@ pub fn stopPath(svc: *Service, owner: *Owner, path: []const u8) void {
 pub fn forgetPath(svc: *Service, owner: *Owner, path: []const u8) void {
     std.debug.assert(owner.service == svc);
     const storage = owner.storage orelse return;
-    svc.lock();
+    svc.lockAt(@src());
     defer svc.unlock();
     const entry = svc.paths.get(path) orelse return;
     const record = storage.records.getPtr(entry) orelse return;

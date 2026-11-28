@@ -180,6 +180,10 @@ pub const Service = struct {
     allocator: Allocator,
     threads: []std.Thread = &.{},
     mutex: c.pthread_mutex_t = undefined,
+    lock_debug: bool = false,
+    lock_acquired_ns: i64 = 0,
+    lock_wait_ns: i64 = 0,
+    lock_caller: std.builtin.SourceLocation = undefined,
     cond: c.pthread_cond_t = undefined,
     stop: bool = false,
     policy: AutoPolicy,
@@ -230,6 +234,10 @@ pub const Service = struct {
         self.* = .{
             .allocator = allocator,
             .policy = policy,
+            .lock_debug = if (c.getenv("REDIWM_FILES_SIZE_LOCK_DEBUG")) |value|
+                std.mem.eql(u8, std.mem.span(value), "1")
+            else
+                false,
             .live_node_budget = budgets.live_nodes,
             .path_entry_budget = budgets.path_entries,
         };
@@ -257,10 +265,10 @@ pub const Service = struct {
     }
 
     pub fn requestStop(self: *Service) void {
-        _ = c.pthread_mutex_lock(&self.mutex);
+        self.lockAt(@src());
         self.stop = true;
         _ = c.pthread_cond_broadcast(&self.cond);
-        _ = c.pthread_mutex_unlock(&self.mutex);
+        self.unlock();
     }
 
     /// Stops the workers (waiting for each to finish its directory) and frees
@@ -290,11 +298,87 @@ pub const Service = struct {
     }
 
     pub fn lock(self: *Service) void {
+        self.lockAt(@src());
+    }
+
+    pub fn lockAt(self: *Service, caller: std.builtin.SourceLocation) void {
+        const started = if (self.lock_debug) monotonicNs() else 0;
         _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.lock_debug) {
+            self.lock_acquired_ns = monotonicNs();
+            self.lock_wait_ns = self.lock_acquired_ns - started;
+            self.lock_caller = caller;
+        }
+    }
+
+    pub const LockSample = struct {
+        hold: i64,
+        wait: i64,
+        caller: std.builtin.SourceLocation,
+        nodes: usize,
+    };
+
+    threadlocal var pre_wait_samples: [16]LockSample = undefined;
+    threadlocal var pre_wait_count: usize = 0;
+    threadlocal var pre_wait_dropped: usize = 0;
+
+    pub fn beforeWait(self: *Service) void {
+        const sample = self.lockSample() orelse return;
+        if (pre_wait_count == pre_wait_samples.len) {
+            pre_wait_dropped += 1;
+            return;
+        }
+        pre_wait_samples[pre_wait_count] = sample;
+        pre_wait_count += 1;
+    }
+
+    pub fn lockSample(self: *Service) ?LockSample {
+        if (!self.lock_debug) return null;
+        const hold = monotonicNs() - self.lock_acquired_ns;
+        const wait = self.lock_wait_ns;
+        if (hold < 2_000_000 and wait < 2_000_000) return null;
+        return .{
+            .hold = hold,
+            .wait = wait,
+            .caller = self.lock_caller,
+            .nodes = self.liveNodeCount(),
+        };
+    }
+
+    pub fn reportLockSample(sample: ?LockSample) void {
+        const s = sample orelse return;
+        std.log.warn("size-lock: {s}:{d} {s} wait_us={d} hold_us={d} nodes={d}", .{
+            s.caller.file,
+            s.caller.line,
+            s.caller.fn_name,
+            @divTrunc(s.wait, 1000),
+            @divTrunc(s.hold, 1000),
+            s.nodes,
+        });
+    }
+
+    /// A condition wait releases and reacquires the mutex internally.
+    pub fn resumedAfterWait(self: *Service, caller: std.builtin.SourceLocation) void {
+        if (self.lock_debug) {
+            self.lock_acquired_ns = monotonicNs();
+            self.lock_wait_ns = 0;
+            self.lock_caller = caller;
+        }
     }
 
     pub fn unlock(self: *Service) void {
+        const sample = self.lockSample();
         _ = c.pthread_mutex_unlock(&self.mutex);
+        reportLockSample(sample);
+        if (self.lock_debug) {
+            for (pre_wait_samples[0..pre_wait_count]) |saved|
+                reportLockSample(saved);
+            pre_wait_count = 0;
+            if (pre_wait_dropped != 0) {
+                std.log.warn("size-lock: dropped {d} pre-wait samples", .{pre_wait_dropped});
+                pre_wait_dropped = 0;
+            }
+        }
     }
 
     pub fn bump(self: *Service) void {
@@ -333,7 +417,7 @@ pub const Service = struct {
     }
 
     pub fn lookupIdentity(self: *Service, owner: ?*const Owner, path: []const u8, expected: ?Key) Info {
-        self.lock();
+        self.lockAt(@src());
         defer self.unlock();
         const entry = self.paths.get(path) orelse return .{};
         if (expected) |key| {
@@ -378,7 +462,7 @@ pub const Service = struct {
 
     /// Whether any directory is waiting or being read.
     pub fn busy(self: *Service) bool {
-        self.lock();
+        self.lockAt(@src());
         defer self.unlock();
         if (self.working > 0) return true;
         return resolution.hasReady(self) or self.queued_count > 0;
@@ -716,6 +800,12 @@ pub const Service = struct {
     pub const resolvePath = resolution.resolvePath;
     pub const resolved = resolution.resolved;
 };
+
+fn monotonicNs() i64 {
+    var ts: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+    return @as(i64, ts.tv_sec) * 1_000_000_000 + @as(i64, ts.tv_nsec);
+}
 
 pub fn nowMs() i64 {
     var ts: c.struct_timespec = undefined;

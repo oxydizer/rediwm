@@ -96,14 +96,16 @@ pub fn run(svc: *Service) void {
 /// dispatch. Retry after OOM even if the service receives no more requests.
 pub fn wait(svc: *Service) void {
     if (!hasWork(svc)) {
+        svc.beforeWait();
         _ = c.pthread_cond_wait(&svc.cond, &svc.mutex);
+        svc.resumedAfterWait(@src());
         return;
     }
     const delay = retryDelay(svc);
     if (delay == 0) {
         // Another bounded batch is ready. Give requesters a turn first.
         svc.unlock();
-        svc.lock();
+        svc.lockAt(@src());
         return;
     }
     var until: c.struct_timespec = undefined;
@@ -111,7 +113,9 @@ pub fn wait(svc: *Service) void {
     const ns = until.tv_nsec + delay * std.time.ns_per_ms;
     until.tv_sec += @intCast(@divTrunc(ns, std.time.ns_per_s));
     until.tv_nsec = @intCast(@mod(ns, std.time.ns_per_s));
+    svc.beforeWait();
     _ = c.pthread_cond_timedwait(&svc.cond, &svc.mutex, &until);
+    svc.resumedAfterWait(@src());
 }
 
 fn retryDelay(svc: *const Service) i64 {

@@ -34,7 +34,7 @@ pub fn workerLoop(self: *Service) void {
     var scratch: Scratch = .{};
     defer scratch.deinit(self.allocator);
 
-    self.lock();
+    self.lockAt(@src());
     while (!self.stop) {
         reclaim.run(self);
         const job = self.take(&path_buf) orelse {
@@ -49,7 +49,7 @@ pub fn workerLoop(self: *Service) void {
                 self.unlock();
                 retry = self.resolvePath(resolution);
                 resolution.deinit(self.allocator);
-                self.lock();
+                self.lockAt(@src());
             },
             .scan => |s| {
                 // The path is in this worker's `path_buf`: read it unlocked.
@@ -57,7 +57,7 @@ pub fn workerLoop(self: *Service) void {
                 scratch.found.clearRetainingCapacity();
                 scratch.names.clearRetainingCapacity();
                 const result = readDirectory(self.allocator, job.path.?, s.ref.key, dir_buf, &scratch.found, &scratch.names);
-                self.lock();
+                self.lockAt(@src());
                 if (self.liveId(s.ref)) |id| {
                     if (result) |read| {
                         if (!read.opened) {
@@ -84,7 +84,7 @@ pub fn workerLoop(self: *Service) void {
             self.unlock();
             const delay: c.struct_timespec = .{ .tv_sec = 0, .tv_nsec = 10_000_000 };
             _ = c.nanosleep(&delay, null);
-            self.lock();
+            self.lockAt(@src());
         }
     }
     self.unlock();
