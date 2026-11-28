@@ -422,6 +422,9 @@ def run():
                 repeated = wait_for(lambda: next((p.name for p in home.iterdir() if p.name.startswith("a") and set(p.name) == {"a"}), None),
                                     "held key did not make a folder")
                 assert 8 <= len(repeated) <= 30, repeated
+                # Keep Archive in the first cell even if the repeat-created
+                # folder sorts before it and the deletion scan is still pending.
+                search("Archive")
                 (home / repeated).rmdir()
 
                 # A right-click targets the clicked item, including rename.
@@ -430,6 +433,8 @@ def run():
                 text("Archive renamed")
                 key(28)
                 wait_for(lambda: (home / "Archive renamed").is_dir(), "context rename failed")
+                assert not (home / "Archive").exists()
+                key(1)  # Clear the local filter before testing empty space.
 
                 # Empty-space menu near the edge must remain clickable after clamping.
                 click(935, 500, 273)
