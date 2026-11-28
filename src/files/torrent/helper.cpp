@@ -92,13 +92,8 @@ static void sleep_engine() {
   if (!session)
     return;
   for (auto &[id, t] : transfers) {
-    t.cached = t.status();
-    t.cached_info = t.info();
-    t.cached_progress.clear();
-    if (t.cached_info)
-      t.handle.file_progress(t.cached_progress,
-                             lt::torrent_handle::piece_granularity);
-    t.cached_priorities = t.handle.get_file_priorities();
+    if (t.handle.is_valid())
+      t.cache_transfer();
     t.handle = {};
   }
   session->set_alert_notify({});
@@ -106,15 +101,53 @@ static void sleep_engine() {
 }
 static bool active() {
   for (auto &[id, t] : transfers)
-    if (!(t.status().flags & lt::torrent_flags::paused) || t.moving ||
-        t.configuring)
+    if (t.deletion_active() ||
+        (!t.deleting() &&
+         (!(t.status().flags & lt::torrent_flags::paused) ||
+          t.moving || t.configuring)))
       return true;
   return false;
 }
+void advance_deletion(Transfer &t) {
+  if (t.deletion_phase != DeletionPhase::waiting_storage)
+    return;
+
+  t.resume_after_publish = false;
+  t.start_after_priority = false;
+
+  // A submitted storage move must settle before capturing its path.
+  if (t.storage_move_submitted || t.configuring)
+    return;
+
+  // Publication awaiting pause has not moved anything yet.
+  t.moving = false;
+
+  if (!t.handle.is_valid())
+    throw std::runtime_error("Torrent handle unavailable for deletion");
+
+  if (t.handle.status().flags & lt::torrent_flags::paused) {
+    // An already paused torrent may not emit another pause alert.
+    t.deletion_phase = DeletionPhase::waiting_flush;
+    t.handle.flush_cache();
+  } else {
+    t.deletion_phase = DeletionPhase::waiting_pause;
+    t.handle.pause();
+  }
+}
+
 static void maintain() {
   if (!session)
     return;
   for (auto &[id, t] : transfers) {
+    if (t.deleting()) {
+      try {
+        advance_deletion(t);
+      } catch (std::exception const &e) {
+        t.error = e.what();
+        t.deletion_phase = DeletionPhase::failed;
+      }
+      continue;
+    }
     auto s = t.status();
     if (!t.pending && s.is_finished && !t.published && !t.moving &&
         t.error.empty()) {
@@ -139,7 +172,8 @@ static gboolean tick(gpointer) {
   ++ticks;
   if (ticks % 30 == 0)
     for (auto &[id, t] : transfers)
-      if (t.handle.is_valid() && t.handle.need_save_resume_data())
+      if (!t.deleting() && t.handle.is_valid() &&
+          t.handle.need_save_resume_data())
         request_save(t);
   maintain();
   publish();
@@ -192,10 +226,37 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
     if (!t)
       continue;
     try {
+      if (t->deletion_phase == DeletionPhase::waiting_disk &&
+          lt::alert_cast<lt::cache_flushed_alert>(alert)) {
+        t->deletion_phase = DeletionPhase::ready;
+        continue;
+      }
+
+      if (t->deletion_phase == DeletionPhase::waiting_pause &&
+          lt::alert_cast<lt::torrent_paused_alert>(alert)) {
+        t->deletion_phase = DeletionPhase::waiting_flush;
+        t->handle.flush_cache();
+        continue;
+      }
+
+      if (t->deletion_phase == DeletionPhase::waiting_flush &&
+          lt::alert_cast<lt::cache_flushed_alert>(alert)) {
+        if (!(t->handle.status().flags & lt::torrent_flags::paused))
+          throw std::runtime_error("Torrent resumed during deletion");
+        t->cache_transfer();
+        t->cached.flags |= lt::torrent_flags::paused;
+        t->deletion_phase = DeletionPhase::waiting_disk;
+        session->remove_torrent(t->handle);
+        continue;
+      }
+
       if (auto a = lt::alert_cast<lt::save_resume_data_alert>(alert)) {
-        auto bytes = lt::write_resume_data_buf(a->params);
-        atomic_write(state_dir + "/" + t->id + ".resume",
-                     std::string(bytes.data(), bytes.size()));
+        if (t->deletion_phase != DeletionPhase::waiting_disk &&
+            t->deletion_phase != DeletionPhase::ready) {
+          auto bytes = lt::write_resume_data_buf(a->params);
+          atomic_write(state_dir + "/" + t->id + ".resume",
+                       std::string(bytes.data(), bytes.size()));
+        }
         saved(t->id);
       }
       if (lt::alert_cast<lt::save_resume_data_failed_alert>(alert))
@@ -212,12 +273,14 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
               "File list exceeds the session metadata limit");
         request_save(*t);
       }
-      if (t->moving && lt::alert_cast<lt::torrent_paused_alert>(alert))
+      if (!t->deleting() && t->moving &&
+          lt::alert_cast<lt::torrent_paused_alert>(alert))
         publish_storage(*t);
       if (lt::alert_cast<lt::storage_moved_alert>(alert)) {
         t->moving = false;
+        t->storage_move_submitted = false;
         t->published = true;
-        if (t->resume_after_publish)
+        if (!t->deleting() && t->resume_after_publish)
           t->handle.resume();
         persist(*t);
         request_save(*t);
@@ -236,13 +299,17 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
       }
       if (auto a = lt::alert_cast<lt::storage_moved_failed_alert>(alert)) {
         t->moving = false;
+        t->storage_move_submitted = false;
         t->error = "Could not publish download: " + a->error.message();
         t->handle.pause();
         request_save(*t);
       }
     } catch (std::exception const &e) {
       t->error = e.what();
-      t->handle.pause();
+      if (t->deleting())
+        t->deletion_phase = DeletionPhase::failed;
+      if (t->handle.is_valid())
+        t->handle.pause();
       saved(t->id);
     }
   }
@@ -254,7 +321,8 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
 static gboolean stop(gpointer) {
   quitting = true;
   for (auto &[id, t] : transfers)
-    request_save(t);
+    if (!t.deleting())
+      request_save(t);
   schedule();
   g_timeout_add_seconds(
       5,

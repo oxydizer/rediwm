@@ -36,12 +36,30 @@ namespace helper {
 
 inline constexpr size_t max_packet = 192 * 1024;
 inline constexpr size_t max_files = 512, max_torrents = 64;
+
+enum class DeletionMode {
+  none,
+  trash,
+  permanent,
+};
+
+enum class DeletionPhase {
+  none,
+  waiting_storage,
+  waiting_pause,
+  waiting_flush,
+  waiting_disk,
+  ready,
+  failed,
+};
+
 struct Transfer {
   lt::torrent_handle handle;
   std::string id, source, destination, error, publication;
   bool pending = true, published = false, moving = false,
        resume_after_publish = false;
   bool configuring = false, start_after_priority = false;
+  bool storage_move_submitted = false;
   std::vector<lt::download_priority_t> requested_priorities;
   int ratio = 1, limit = 1024 * 1024;
   lt::torrent_status cached;
@@ -49,6 +67,27 @@ struct Transfer {
   /// Per-file bytes and priorities, kept while the engine sleeps.
   std::vector<int64_t> cached_progress;
   std::vector<lt::download_priority_t> cached_priorities;
+  DeletionMode deletion_mode = DeletionMode::none;
+  DeletionPhase deletion_phase = DeletionPhase::none;
+
+  bool deleting() const {
+    return deletion_phase != DeletionPhase::none;
+  }
+
+  bool deletion_active() const {
+    return deleting() && deletion_phase != DeletionPhase::failed;
+  }
+
+  void cache_transfer() {
+    cached = handle.status();
+    cached_info = handle.torrent_file();
+    cached_progress.clear();
+    if (cached_info)
+      handle.file_progress(cached_progress,
+                           lt::torrent_handle::piece_granularity);
+    cached_priorities = handle.get_file_priorities();
+  }
+
   lt::torrent_status status() const {
     return handle.is_valid() ? handle.status() : cached;
   }
@@ -72,6 +111,7 @@ inline bool use_scopes = false;
 void create_engine();
 void wake_engine();
 void schedule();
+void advance_deletion(Transfer &t);
 
 // helper_transfers.cpp
 void request_save(Transfer &t);

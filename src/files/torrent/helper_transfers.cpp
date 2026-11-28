@@ -5,7 +5,9 @@
 namespace helper {
 
 void request_save(Transfer &t) {
-  if (t.handle.is_valid()) {
+  if (t.handle.is_valid() &&
+      t.deletion_phase != DeletionPhase::waiting_disk &&
+      t.deletion_phase != DeletionPhase::ready) {
     ++saves[t.id];
     t.handle.save_resume_data(lt::torrent_handle::save_info_dict);
   }
@@ -16,7 +18,7 @@ void finish_configuration(Transfer &t) {
   t.requested_priorities.clear();
   t.handle.set_upload_limit(t.limit);
   t.handle.unset_flags(lt::torrent_flags::upload_mode);
-  if (t.start_after_priority) {
+  if (!t.deleting() && t.start_after_priority) {
     t.handle.resume();
     // Peers now, not at the next interval (minutes for a finished one).
     t.handle.force_reannounce(0, -1, lt::torrent_handle::ignore_min_interval);
@@ -286,7 +288,8 @@ std::string command(JsonObject *o) {
   }
   if (op == "pause_all" || op == "stop_seeding") {
     for (auto &[id, t] : transfers)
-      if (op == "pause_all" || t.status().is_finished) {
+      if (!t.deleting() &&
+          (op == "pause_all" || t.status().is_finished)) {
         t.resume_after_publish = false;
         t.start_after_priority = false;
         t.handle.pause();
@@ -299,6 +302,9 @@ std::string command(JsonObject *o) {
   if (it == transfers.end())
     throw std::runtime_error("Transfer no longer exists");
   auto &t = it->second;
+  if (t.deleting())
+    throw std::runtime_error("Torrent deletion is in progress");
+
   if (op == "remove") {
     session->remove_torrent(t.handle); // Never delete payloads.
     fs::remove(state_dir + "/" + id + ".ini");
@@ -351,8 +357,10 @@ void publish_storage(Transfer &t) {
                                "written; partial files are kept");
     t.handle.move_storage(t.publication,
                           lt::move_flags_t::reset_save_path_unchecked);
+    t.storage_move_submitted = true;
   } catch (std::exception const &e) {
     t.moving = false;
+    t.storage_move_submitted = false;
     t.error = e.what();
     t.handle.pause();
     request_save(t);
