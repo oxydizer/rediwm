@@ -155,10 +155,6 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
         if (cc.page == .shortcuts and key == .enter) {
             if (cc.shortcuts.commitInline(cc, focused)) return true;
         }
-        if (cc.page == .shortcuts and key == .escape and cc.shortcuts.cancelCommand()) {
-            cc.refresh();
-            return true;
-        }
         if (cc.page == .keys and key == .escape and cc.key_settings.form != .none) {
             @import("sections/keys.zig").cancel(cc, 0);
             return true;

@@ -89,19 +89,7 @@ const Target = struct {
         return if (x.command) |body| y.command != null and std.mem.eql(u8, body, y.command.?) else y.command == null;
     }
 };
-const Pending = union(enum) { record, reset: ?Target, save_command, delete_command };
-
-const CommandEditor = struct {
-    id: ?[]const u8 = null,
-    original: ?[]const u8 = null,
-    focus: bool = true,
-    confirm_delete: bool = false,
-
-    fn deinit(editor: *CommandEditor) void {
-        if (editor.id) |id| gpa.free(id);
-        if (editor.original) |command| gpa.free(command);
-    }
-};
+const Pending = union(enum) { record, reset: ?Target };
 
 const InlineCommand = struct {
     id: []const u8,
@@ -196,9 +184,6 @@ pub const Section = struct {
     search_field: W = .{ .kind = .container },
     search_clear: W = .{ .kind = .container },
     search_focus: bool = false,
-    command_editor: ?CommandEditor = null,
-    command_field: W = .{ .kind = .container },
-    command_field_visible: bool = false,
     inline_commands: std.ArrayList(*InlineCommand) = .empty,
     inline_focus: ?[]const u8 = null,
     collapsed: [names.len]bool = @splat(false),
@@ -219,8 +204,6 @@ pub const Section = struct {
             gpa.destroy(entry);
         }
         s.inline_commands.deinit(gpa);
-        s.closeCommandEditor();
-        if (s.command_field.kind == .text_input) gpa.free(s.command_field.kind.text_input.value);
         if (s.search_field.kind == .text_input) gpa.free(s.search_field.kind.text_input.value);
         s.arena.deinit();
         s.editing_arena.deinit();
@@ -365,7 +348,6 @@ pub const Section = struct {
 
     pub fn cancel(s: *Section) void {
         s.cancelRecording();
-        s.closeCommandEditor();
     }
 
     pub fn cancelRecording(s: *Section) void {
@@ -376,23 +358,6 @@ pub const Section = struct {
         s.candidate = null;
         _ = s.editing_arena.reset(.free_all);
         s.message = "";
-    }
-
-    fn closeCommandEditor(s: *Section) void {
-        if (s.command_editor) |*editor| editor.deinit();
-        s.command_editor = null;
-    }
-
-    pub fn cancelCommand(s: *Section) bool {
-        if (s.command_editor == null) return false;
-        s.cancel();
-        return true;
-    }
-
-    pub fn takeCommandFocus(s: *Section) bool {
-        const editor = if (s.command_editor) |*active| active else return false;
-        defer editor.focus = false;
-        return editor.focus;
     }
 
     pub fn release(s: *Section, keycode: u32) void {
@@ -473,14 +438,10 @@ pub const Section = struct {
                 if (s.rendered_mode != config.compositor.desktop_mode) break :reset error.ConfigChanged;
                 break :reset saving.saveReset(gpa, cc.server.io, config, config.compositor.desktop_mode, if (target) |row| row.action else null);
             },
-            .save_command => s.saveCommand(cc, false),
-            .delete_command => s.saveCommand(cc, true),
         };
         result catch |err| {
             s.message = switch (err) {
                 error.ShortcutConflict => i18n.tr("A factory shortcut is in use. Unassign it before resetting."),
-                error.InvalidCommand => i18n.tr("Enter an executable and check the command’s quoting and expansions."),
-                error.CommandChanged => i18n.tr("This command changed on disk. Reopen it before saving."),
                 else => i18n.tr("Could not save. Check the configuration file and try again."),
             };
             cc.refresh();
@@ -489,22 +450,6 @@ pub const Section = struct {
         s.cancel();
         @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
         cc.refresh();
-    }
-
-    fn saveCommand(s: *Section, cc: *panel.ControlCenter, deleting: bool) !void {
-        const editor = if (s.command_editor) |*active| active else return;
-        const config = &cc.server.config;
-        var arena = std.heap.ArenaAllocator.init(gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        const id = editor.id orelse try nextCommandId(a, config, s);
-        if (editor.original) |original| {
-            const current = config.shortcut_commands.get(id) orelse return error.CommandChanged;
-            if (!std.mem.eql(u8, current, original)) return error.CommandChanged;
-        }
-        const command = if (deleting) null else s.command_field.kind.text_input.value;
-        if (command) |value| _ = try @import("../../config_runtime/actions.zig").customCommandArgs(cc.server, a, value);
-        try saving.saveCustomCommand(gpa, cc.server.io, config, id, command);
     }
 };
 
@@ -557,11 +502,9 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     _ = s.arena.reset(.retain_capacity);
     s.targets = .empty;
     s.group_count = 0;
-    s.command_field_visible = false;
     buildGroups(s, cc, s.arena.allocator()) catch {
         s.groups[0] = panel.outOfMemory();
         s.group_count = 1;
-        s.command_field_visible = false;
         return;
     };
 }
@@ -640,10 +583,6 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             if (!matches) continue;
             const target = try (Target{ .action = action, .mode = mode, .command = command }).copy(a);
             if (keys.isBuiltIn(action) or command != null) {
-                if (s.command_editor) |*editor| {
-                    if (editor.id != null and action == .custom_command and std.mem.eql(u8, editor.id.?, action.custom_command))
-                        try rows.append(a, try commandForm(s, cc, a, editor));
-                }
                 const assigned = slots.resolve(
                     binds,
                     defaults,
@@ -680,10 +619,6 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
                 }
                 continue;
             }
-            if (s.command_editor) |*editor| {
-                if (editor.id != null and action == .custom_command and std.mem.eql(u8, editor.id.?, action.custom_command))
-                    try rows.append(a, try commandForm(s, cc, a, editor));
-            }
             var first = true;
             for (effective, labels) |bind, label| {
                 if (!keys.actionEql(bind.action, action)) continue;
@@ -699,9 +634,6 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             try rows.insert(a, 1, .{ .kind = .container, .padding = ui.layout.Edges.xy(12, 8), .children = try children(a, &.{
                 button(cc, 0, i18n.tr("Add Custom Command"), null, addCommand),
             }) });
-            if (s.command_editor) |*editor| {
-                if (!s.command_field_visible) try rows.insert(a, 2, try commandForm(s, cc, a, editor));
-            }
         }
         s.groups[s.group_count] = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
         s.group_count += 1;
@@ -761,7 +693,7 @@ fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled
         if (!enabled) reset.kind.button.state = .disabled;
         try widgets.append(a, reset);
     }
-    if (s.editing == null and s.command_editor == null and s.message.len != 0) try widgets.append(a, text(s.message, true));
+    if (s.editing == null and s.message.len != 0) try widgets.append(a, text(s.message, true));
     return .{ .kind = .container, .direction = .column, .@"align" = .start, .gap = 8, .children = widgets.items };
 }
 
@@ -982,8 +914,6 @@ fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: 
             try controls.append(a, remove);
         }
         if (add) try controls.append(a, button(cc, id, i18n.tr("Add shortcut"), .plus, addClicked));
-        if (title.len != 0 and target.action == .custom_command and cc.server.config.shortcut_commands.contains(target.action.custom_command))
-            try controls.append(a, button(cc, id, i18n.tr("Edit command"), null, editCommand));
         if (title.len != 0 and keys.isBuiltIn(target.action)) {
             var restore = button(cc, id, i18n.tr("Restore factory bindings"), .refresh, resetClicked);
             if (!reset) restore.kind.button.state = .disabled;
@@ -996,50 +926,6 @@ fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: 
 
 fn owner(p: ?*anyopaque) *panel.ControlCenter {
     return @ptrCast(@alignCast(p.?));
-}
-
-fn commandForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, editor: *CommandEditor) !W {
-    var controls: std.ArrayList(W) = .empty;
-    if (editor.confirm_delete) {
-        try controls.append(a, button(cc, 0, i18n.tr("Delete command and its shortcuts"), null, confirmDeleteCommand));
-    } else {
-        try controls.append(a, button(cc, 0, i18n.tr("Save command"), null, saveCommandClicked));
-        if (editor.id != null) try controls.append(a, button(cc, 0, i18n.tr("Delete command…"), null, requestDeleteCommand));
-    }
-    try controls.append(a, button(cc, 0, i18n.tr("Cancel"), null, cancelClicked));
-    s.command_field_visible = true;
-    return .{ .kind = .container, .direction = .column, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 8), .gap = 8, .children = try children(a, &.{
-        .{ .kind = .container, .width = .{ .percent = 1 }, .children = (&s.command_field)[0..1] },
-        text(if (s.message.len > 0) s.message else if (editor.confirm_delete)
-            i18n.tr("Delete this command and its bindings in all desktop modes?")
-        else
-            i18n.tr("Commands run directly. Use sh -c to run shell syntax."), true),
-        .{ .kind = .container, .gap = 8, .children = controls.items },
-    }) };
-}
-
-fn openCommand(cc: *panel.ControlCenter, id: ?[]const u8) !void {
-    const original = if (id) |key| cc.server.config.shortcut_commands.get(key) orelse return else null;
-    const owned_id = if (id) |key| try gpa.dupe(u8, key) else null;
-    errdefer if (owned_id) |key| gpa.free(key);
-    const owned_original = if (original) |value| try gpa.dupe(u8, value) else null;
-    errdefer if (owned_original) |value| gpa.free(value);
-    const value = try gpa.dupe(u8, original orelse "");
-    const s = &cc.shortcuts;
-    s.cancel();
-    if (s.command_field.kind == .text_input) gpa.free(s.command_field.kind.text_input.value);
-    s.command_editor = .{
-        .id = owned_id,
-        .original = owned_original,
-    };
-    s.command_field = .{ .name = "shortcut_command", .kind = .{ .text_input = .{
-        .placeholder = i18n.tr("Executable and arguments"),
-        .value = value,
-        .cursor_pos = value.len,
-        .owner = cc,
-        .on_change = commandChanged,
-    } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } };
-    cc.refresh();
 }
 
 fn addCommand(p: ?*anyopaque, _: usize) void {
@@ -1090,41 +976,6 @@ fn deleteInlineCommand(p: ?*anyopaque, i: usize) void {
             @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
         cc.refresh();
         return;
-    }
-}
-
-fn editCommand(p: ?*anyopaque, i: usize) void {
-    const cc = owner(p);
-    const target = cc.shortcuts.targets.items[i];
-    _ = target.resolve(&cc.server.config) catch return;
-    openCommand(cc, target.action.custom_command) catch return;
-}
-
-fn commandChanged(p: ?*anyopaque, _: usize, _: []const u8) void {
-    const cc = owner(p);
-    if (cc.shortcuts.message.len == 0) return;
-    cc.shortcuts.message = "";
-    cc.refresh();
-}
-
-fn saveCommandClicked(p: ?*anyopaque, _: usize) void {
-    const s = &owner(p).shortcuts;
-    if (s.command_editor) |editor| {
-        if (!editor.confirm_delete) s.pending = .save_command;
-    }
-}
-
-fn requestDeleteCommand(p: ?*anyopaque, _: usize) void {
-    const cc = owner(p);
-    if (cc.shortcuts.command_editor) |*editor| editor.confirm_delete = true;
-    cc.shortcuts.message = "";
-    cc.refresh();
-}
-
-fn confirmDeleteCommand(p: ?*anyopaque, _: usize) void {
-    const s = &owner(p).shortcuts;
-    if (s.command_editor) |editor| {
-        if (editor.confirm_delete) s.pending = .delete_command;
     }
 }
 
