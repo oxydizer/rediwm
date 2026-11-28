@@ -26,7 +26,6 @@ const pin_base = App.pin_base;
 const MenuKind = @import("app_model.zig").MenuKind;
 const FileAction = @import("app_model.zig").FileAction;
 const Sort = @import("app_model.zig").Sort;
-const SizeState = @import("app_model.zig").SizeState;
 const ViewItem = @import("app_model.zig").ViewItem;
 const nowMs = @import("app_draw.zig").nowMs;
 const clipDamage = @import("app_draw.zig").clipDamage;
@@ -65,15 +64,17 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
     var items: [20]ViewItem = undefined;
     app.items = .fromOwnedSlice(&items);
     try std.testing.expectEqual(@as(i32, 3), app.columns());
-    try std.testing.expectEqual(@as(?usize, 0), app.itemAt(250, 158));
-    try std.testing.expectEqual(@as(?usize, 1), app.itemAt(490, 158));
-    // Cards are 72 px tall on an 80 px pitch from y = 132.
-    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 240));
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(220, 158));
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(450, 158));
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, 208));
+    try std.testing.expectEqual(@as(i32, 82), app.contentTop());
+    const top = @as(f64, @floatFromInt(app.viewTop() + app.itemInset()));
+    try std.testing.expectEqual(@as(?usize, 0), app.itemAt(250, top + 26));
+    try std.testing.expectEqual(@as(?usize, 1), app.itemAt(490, top + 26));
+    // Cards are 72 px tall on an 80 px pitch.
+    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, top + 108));
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(220, top + 26));
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(450, top + 26));
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, top + 76));
     app.scroll_y = 80;
-    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 158));
+    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, top + 26));
     app.scroll_y = 0;
     app.revealIndex(19);
     try std.testing.expect(app.scroll_y > 0);
@@ -82,6 +83,10 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
     try std.testing.expectEqual(@as(i32, 1), app.columns());
     app.scroll_y = 0;
     try std.testing.expectEqual(@as(?usize, 0), app.itemAt(30, 180));
+    try std.testing.expectEqual(@as(i32, 122), app.contentTop());
+    app.list_view = true;
+    try std.testing.expectEqual(app.contentTop() + 30, app.viewTop());
+    try std.testing.expectEqual(@as(i32, 32), app.rowHeight());
 }
 
 test "search and sorting preserve visible selection across snapshot rebuilds" {
@@ -102,9 +107,7 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
         .home_dir = "/",
         .items_arena = std.heap.ArenaAllocator.init(allocator),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(SizeState).init(allocator),
     };
-    defer app.folder_sizes.deinit();
     defer app.items_arena.deinit();
     defer app.items.deinit(allocator);
     defer app.search.text.deinit(allocator);
@@ -217,7 +220,6 @@ pub fn testApp() !App {
         .history = try history_mod.History.init(std.testing.allocator, "/tmp"),
         .home_dir = "/tmp",
         .items_arena = std.heap.ArenaAllocator.init(std.testing.allocator),
-        .folder_sizes = std.StringHashMap(SizeState).init(std.testing.allocator),
     };
 }
 
@@ -272,7 +274,8 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expect(app.sizeButtonRect(0) == null);
 
     app.toggleFolderSize(0);
-    try std.testing.expectEqual(@as(usize, 0), app.folder_sizes.count());
+    try std.testing.expect(!app.folderSizeClickable(app.items.items[0]));
+    try std.testing.expect(app.folderSizeInfo(app.items.items[0]).status == .unknown);
     try std.testing.expect(app.dirsize_pool == null);
 
     // A completed manifest entry is no longer a ghost and remains actionable.
@@ -432,6 +435,9 @@ test "address search and dialog share selection editing without file shortcuts" 
     defer app.deinit();
     try app.location.set(app.allocator, "/tmp/été");
     app.focus = .location_bar;
+    const field = header.field(app.w);
+    try std.testing.expectEqual(field, app.editorRect());
+    try std.testing.expectEqual(field.x + 10, app.editorTextArea().x);
     app.ctrl = true;
     app.handleKey(c.XKB_KEY_a, "a");
     app.handleKey(c.XKB_KEY_c, "c");
@@ -484,10 +490,10 @@ test "pointer caret selection and long-path scrolling at both raster scales" {
         app.renderEditor(cr, &app.location, header.field(app.w), true, false);
         try std.testing.expect(app.location.scroll > 0);
         app.location.scroll = 0;
-        app.placeCaret(App.textArea(header.field(app.w), false).x, false);
+        app.placeCaret(app.editorTextArea().x, false);
         try std.testing.expectEqual(@as(usize, 0), app.location.cursor);
-        const pen = measureText(cr, "/tmp/", App.fieldFontSize(), false);
-        app.placeCaret(App.textArea(header.field(app.w), false).x + pen, true);
+        const pen = measureText(cr, "/tmp/", app.fieldFontSize(&app.location), false);
+        app.placeCaret(app.editorTextArea().x + pen, true);
         const sel = app.location.selection();
         try std.testing.expectEqualStrings("/tmp/", app.location.text.items[sel[0]..sel[1]]);
         app.location.move(app.location.text.items.len, false);

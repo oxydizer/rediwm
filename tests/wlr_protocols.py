@@ -409,7 +409,7 @@ def system_bell(tmp):
 
 
 def xdg_foreign(tmp):
-    s = Session(tmp, config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    s = Session(tmp, config='[compositor]\nxwayland = false\ndesktop_mode = "tiling"\n')
     try:
         def launch(version, *args):
             return s.spawn(str(tmp / "fixture"), "xdg-foreign", str(version), *args, stdin=subprocess.PIPE)
@@ -537,7 +537,7 @@ def xdg_dialog(tmp):
     # On a workspace, minimizing an owner whose dialog has the keyboard must not
     # hand focus back to the hidden dialog: that would restore the owner.
     (tmp / "workspaces").mkdir()
-    s = Session(tmp / "workspaces", config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    s = Session(tmp / "workspaces", config='[compositor]\nxwayland = false\ndesktop_mode = "tiling"\n')
     try:
         child, owner_id, dialog_id = launch(s, "plain")
         expect_focus(s, "rediwm.dialog", "a mapped dialog lacks the keyboard")

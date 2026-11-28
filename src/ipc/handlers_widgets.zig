@@ -448,8 +448,9 @@ pub fn buildTaskbarWidgetTree(
             .path = "taskbar/desktop_mode",
             .semantic_id = "tray_desktop_mode",
             .label = switch (server.world.workspaces.mode) {
+                .classic => "Classic",
                 .canvas => "Canvas",
-                .workspaces => "Workspaces",
+                .tiling => "Tiling",
                 .scrolling => "Scrolling",
             },
             .box = .{ .x = mode_box.x - bar.box.x, .y = mode_box.y - bar.box.y, .width = mode_box.width, .height = mode_box.height },
@@ -569,7 +570,7 @@ pub fn buildWindowWidgetTree(
     };
 
     for (controls) |c| {
-        const crect = chrome.controlRectScaled(toplevel.chrome_width - toplevel.controlInsets().right, c.kind, toplevel.chromeDensity());
+        const crect = chrome.controlRectFor(toplevel.chrome_width - toplevel.controlInsets().right, c.kind, toplevel.chromeMetrics());
         const cpt = toplevel.frameWorld(@floatFromInt(crect.x), @floatFromInt(crect.y));
         const cw = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(crect.w)) * toplevel.worldScale())));
         const ch = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(crect.h)) * toplevel.worldScale())));
@@ -595,7 +596,7 @@ pub fn buildWindowWidgetTree(
     var tab_storage: [@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab = undefined;
     const strip = toplevel.tabStrip(&tab_storage);
     if (strip.tabs.len > 0) {
-        const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+        const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), strip);
         for (strip.tabs[geom.first..][0..geom.count], 0..) |tab, i| {
             try appendTabWidget(toplevel, widgets, allocator, try std.fmt.allocPrint(allocator, "tab/{d}", .{tab.id}), tab.title, geom.tab(i), is_visible, tab.active, false);
             try appendTabWidget(toplevel, widgets, allocator, try std.fmt.allocPrint(allocator, "tab/{d}/close", .{tab.id}), "Close tab", geom.close(i), is_visible, false, false);

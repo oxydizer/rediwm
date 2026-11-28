@@ -279,7 +279,7 @@ def run():
                 mode = files.stat().st_mode
                 geometry = next(iter(windows()))
                 # sidebar: the PLACES card header (32 px), then Home, Trash, Recent
-                row = (geometry["x"] + 75, geometry["y"] + 253)
+                row = (geometry["x"] + 75, geometry["y"] + 211)
 
                 def trash_properties():
                     ipc.click_at(*row, 0x111)

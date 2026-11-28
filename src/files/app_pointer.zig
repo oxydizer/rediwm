@@ -122,16 +122,7 @@ pub fn hoverKey(self: *App) usize {
         const i: usize = @intCast(target.id);
         if (i < self.items.items.len) {
             if (self.sizeButtonRect(i)) |rect| {
-                if (rect.contains(x, y)) {
-                    if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
-                        switch (sz) {
-                            .running => return 2_000_000 + i,
-                            .done => {},
-                        }
-                    } else {
-                        return 2_000_000 + i;
-                    }
-                }
+                if (rect.contains(x, y) and self.folderSizeClickable(self.items.items[i])) return 2_000_000 + i;
             }
             return 1000 + i;
         }

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RediTerm
+GenericName=Terminal
+Comment=Use the command line
+Exec=@BINDIR@/rediwm-terminal
+Icon=rediwm-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;console;
+StartupWMClass=rediwm-terminal

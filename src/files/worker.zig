@@ -12,6 +12,7 @@ const collation = @import("collation.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Item = struct {
+    directory_key: ?@import("sizetree.zig").Key = null,
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
     missing: bool = false,

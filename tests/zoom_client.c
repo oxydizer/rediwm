@@ -717,6 +717,10 @@ int main(int argc, char *argv[]) {
           xdg_popup_reposition(popup, pos, 1);
           xdg_positioner_destroy(pos);
         }
+        if (!strcmp(command, "maximize\n")) xdg_toplevel_set_maximized(toplevel);
+        if (!strcmp(command, "unmaximize\n")) xdg_toplevel_unset_maximized(toplevel);
+        if (!strcmp(command, "fullscreen\n")) xdg_toplevel_set_fullscreen(toplevel, NULL);
+        if (!strcmp(command, "unfullscreen\n")) xdg_toplevel_unset_fullscreen(toplevel);
         if (!strcmp(command, "unmap\n")) {
           test_unmapped = 1;
           wl_surface_attach(surface, NULL, 0, 0);

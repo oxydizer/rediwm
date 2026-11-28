@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """The scrolling desktop mode, and the tiled layout kept across mode switches."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -61,7 +62,7 @@ class Session:
 
     def set_mode(self, mode):
         self.ipc.action("set_desktop_mode", {"mode": mode, "persist": False})
-        layout = {"canvas": None, "workspaces": "split", "scrolling": "scrolling"}[mode]
+        layout = {"canvas": None, "tiling": "split", "scrolling": "scrolling"}[mode]
         wait_for(lambda: self.ipc.get_workspaces()[0]["name"] == "Canvas" if layout is None
                  else self.ipc.get_workspaces()[0]["layout"] == layout, "mode " + mode)
         self.ipc.wait_for_frame()
@@ -101,7 +102,7 @@ def mode_memory():
     with tempfile.TemporaryDirectory(prefix="rediwm-mode-memory-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        s = Session(tmp, BASE.format(mode="workspaces") + MOTION_OFF)
+        s = Session(tmp, BASE.format(mode="tiling") + MOTION_OFF)
         try:
             ipc = s.ipc
             a = s.launch("memory-a")
@@ -158,6 +159,156 @@ def mode_memory():
         finally:
             s.stop()
     print("PASS: tiled layout kept across Canvas", flush=True)
+
+
+def mode_entry():
+    """An existing stack joins the strip except where settings opt out."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-entry-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        hints = tmp / "fixed.hints"
+        hints.write_text("240 160 240 160")
+        config = BASE.format(mode="canvas") + 'floating_apps = ["entry-app-float"]\n' + MOTION_OFF + '''
+[keybinds]
+"Super+F11" = "tile_left"
+[[window_rules]]
+app_id = "entry-rule-float"
+floating = true
+'''
+        s = Session(tmp, config)
+        try:
+            ipc = s.ipc
+            snapped = s.launch("entry-snapped")
+            s.chord("F11")
+            maximized = s.launch("entry-maximized")
+            ipc.maximize(maximized)
+            fullscreen = s.launch("entry-fullscreen")
+            ipc.fullscreen(fullscreen)
+            fixed = s.launch("entry-fixed", REDIWM_TEST_CONSTRAINTS=str(hints))
+            floats = [s.launch(name) for name in ("entry-app-float", "entry-rule-float")]
+            s.settle_all()
+            original = {snapped: "manual", maximized: "maximized", fullscreen: "fullscreen"}
+            assert all(s.window(id)["placement"] == value for id, value in original.items())
+
+            def check_strip():
+                ids = [snapped, maximized, fullscreen, fixed]
+                wait_for(lambda: all(s.window(id)["placement"] == "automatic" for id in ids), "existing windows join the strip")
+                s.settle_all()
+                frames = sorted((s.frame(id), id) for id in ids)
+                assert all(a[0] + a[2] <= b[0] for (a, _), (b, _) in zip(frames, frames[1:])), frames
+                assert all(s.window(id)["placement"] == "floating" for id in floats)
+                box = ipc.get_window_debug(fixed)["client_box"]
+                assert (box["width"], box["height"]) == (240, 160), box
+                ipc.focus_window(frames[0][1])
+                for _, id in frames[1:]:
+                    s.chord("Right")
+                    assert ipc.get_focused_window()["id"] == id
+                s.settle_all()
+                assert s.shown(frames[-1][1])
+
+            s.set_mode("scrolling")
+            check_strip()
+            s.set_mode("canvas")
+            s.settle_all()
+            assert all(s.window(id)["placement"] == value for id, value in original.items())
+
+            s.set_mode("tiling")
+            floating_workspace = s.launch("entry-floating-workspace")
+            ipc.action("move_to_workspace", {"id": floating_workspace, "workspace": 2})
+            ipc.action("set_workspace_layout", {"workspace": 2, "layout": "floating"})
+            ipc.action("move_window_to", {"id": fixed, "x": 12, "y": 12})
+            s.set_mode("scrolling")
+            check_strip()
+            assert s.workspace(2)["layout"] == "floating" and s.window(floating_workspace)["placement"] == "floating"
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: existing windows join the strip and configured floats stay out", flush=True)
+
+
+def entry_keys():
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-entry-keys-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        s = Session(tmp, BASE.format(mode="tiling") + MOTION_OFF)
+        try:
+            s.launch("entry-first")
+            middle = s.launch("entry-middle")
+            last = s.launch("entry-last")
+            s.settle_all()
+            assert s.ipc.get_focused_window()["id"] == last
+
+            # Send the mode switch and Super+Left in one IPC dispatch, before
+            # the Wayland event loop can run the scheduled tiling reflow.
+            requests = [
+                ("set_desktop_mode", {"mode": "scrolling", "persist": False}),
+                ("key", {"keycode": 125, "pressed": True}),  # Super
+                ("key", {"keycode": 105, "pressed": True}),  # Left
+                ("key", {"keycode": 105, "pressed": False}),
+                ("key", {"keycode": 125, "pressed": False}),
+                ("focused_window", {}),
+            ]
+            lines = [json.dumps({"version": 1, "command": cmd, "params": params}) for cmd, params in requests]
+            replies = [s.ipc.send_raw("\n".join(lines))]
+            replies.extend(json.loads(s.ipc.reader.readline()) for _ in lines[1:])
+            assert all("Ok" in reply for reply in replies), replies
+            focused = replies[-1]["Ok"]["FocusedWindow"]
+            assert focused["id"] == middle, focused
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: the first arrow after switching mode uses the new strip", flush=True)
+
+
+def workspace_entry():
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-workspace-entry-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        config = BASE.format(mode="tiling") + 'floating_apps = ["entry-float"]\n' + MOTION_OFF + '''
+[keybinds.workspace]
+"Super+F11" = "tile_left"
+'''
+        s = Session(tmp, config)
+        try:
+            floating = s.launch("entry-float")
+            ids = [s.launch(name) for name in ("entry-first", "entry-middle", "entry-last")]
+            for id in ids:
+                s.ipc.focus_window(id)
+                s.chord("F11")
+            s.settle_all()
+            snapped = [s.frame(id) for id in ids]
+            assert all(s.window(id)["placement"] == "manual" for id in ids)
+            assert snapped[0] == snapped[1] == snapped[2], snapped
+
+            def enter_scrolling():
+                s.ipc.action("set_workspace_layout", {"workspace": 1, "layout": "scrolling"})
+                s.ipc.wait_for_frame()
+                columns = [[m["id"] for m in c["members"]] for c in s.workspace(1)["columns"]]
+                assert columns == [[s.window(id)["workspace_order"]] for id in ids], columns
+                assert s.window(floating)["placement"] == "floating"
+
+            enter_scrolling()
+            s.chord("z")
+            s.settle_all()
+            assert s.workspace(1)["layout"] == "split"
+            assert all(s.window(id)["placement"] == "manual" for id in ids)
+            assert [s.frame(id) for id in ids] == snapped
+
+            s.ipc.focus_window(ids[-1])
+            enter_scrolling()
+            for id in reversed(ids[:-1]):
+                s.chord("Left")
+                assert s.ipc.get_focused_window()["id"] == id
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: snapped windows join a scrolling workspace and undo restores their snaps", flush=True)
 
 
 def keyboard_strip():
@@ -264,7 +415,7 @@ def keyboard_strip():
             assert strip()["view"] > 0 and s.frame(d)[:2] == (fx, fy)
 
             # A newly mapped tile also starts underneath an existing float.
-            e = s.launch("strip-e")
+            e = s.launch("strip-e", stdin=subprocess.PIPE, REDIWM_TEST_COMMANDS="1")
             s.settle_all()
             ex, ey, _, _ = s.frame(e)
             ipc.action("move_window_to", {"id": d, "x": ex + 20, "y": ey + 40})
@@ -272,18 +423,38 @@ def keyboard_strip():
             assert ipc.get_focused_window()["id"] == e
             assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == d
 
-            # A suspended column keeps its slot; a maximized tile covers the
-            # float, and the float is above it again once restored.
+            # Client maximize and fullscreen requests expand the tile in
+            # place. They still move with the strip and fill the output
+            # again when approached from either side.
             saved_columns = columns()
-            ipc.maximize(e)
-            wait_for(lambda: s.window(e)["is_maximized"], "e acknowledges maximize")
+            out = ipc.get_outputs()[0]
+            normal = s.frame(e)
+            usable = (out["x"], normal[1] - 8, out["logical_width"], normal[3] + 16)
+            full = tuple(out[k] for k in ("x", "y", "logical_width", "logical_height"))
+
+            def request(command, flag, expected):
+                stdin = s.clients["strip-e"].stdin
+                stdin.write((command + "\n").encode())
+                stdin.flush()
+                wait_for(lambda: ipc.get_window_debug(e)[flag] == expected, command)
+                s.settle_all()
+
+            request("maximize", "maximized", True)
+            for expected in (usable, full):
+                if expected == full:
+                    request("fullscreen", "fullscreen", True)
+                assert columns() == saved_columns
+                assert s.frame(e) == expected, (s.frame(e), expected)
+                assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
+                check_expanded_scrolls(s, a, c, e, expected)
+
+            request("unfullscreen", "fullscreen", False)
+            assert s.window(e)["is_maximized"] and s.frame(e) == usable
+            request("unmaximize", "maximized", False)
+            ipc.focus_window(e)
             s.settle_all()
             assert columns() == saved_columns, (columns(), saved_columns)
-            assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
-            ipc.restore(e)
-            wait_for(lambda: not s.window(e)["is_maximized"], "e acknowledges restore")
-            s.settle_all()
-            assert columns() == saved_columns, (columns(), saved_columns)
+            assert s.frame(e) == normal, (s.frame(e), normal)
             assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == d
 
             # Mapping on a different workspace leaves this one's view alone.
@@ -303,6 +474,45 @@ def keyboard_strip():
         finally:
             s.stop()
     print("PASS: strip columns, view, keys, culling, move-only scrolls and the floating layer", flush=True)
+
+
+def check_expanded_scrolls(s, first, last, expanded, expected):
+    """An expanded tile leaves view, then arrows can reveal it again."""
+    s.ipc.focus_window(last)
+    assert s.workspace(1)["view"] > 0
+    s.chord("Left")
+    s.chord("Left")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == first and s.workspace(1)["view"] == 0
+    x, y, width, height = s.frame(first)
+    assert s.ipc.hit_test(x + width // 2, y + height // 2).get("window_id") == first
+    assert not s.shown(expanded), s.frame(expanded)
+    wait_for(lambda: s.ipc.get_window_debug(expanded)["outputs"] == [], "expanded tile is culled")
+
+    s.ipc.focus_window(last)
+    s.chord("Right")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == expanded and s.frame(expanded) == expected
+
+    # A held gesture moves the expanded window without a new configure.
+    s.ipc.move_cursor(expected[2] // 2, expected[3] // 2)
+    serial = s.ipc.get_window_debug(expanded)["configure_serial"]
+    s.ipc.action("swipe", {"phase": "begin", "fingers": 3})
+    s.ipc.action("swipe", {"phase": "update", "dx": 80, "dy": 0})
+    s.ipc.wait_for_frame()
+    x, y, w, h = expected
+    assert s.frame(expanded) == (x + 160, y, w, h), s.frame(expanded)
+    assert s.ipc.get_window_debug(expanded)["configure_serial"] == serial
+    s.ipc.action("swipe", {"phase": "end", "cancelled": True})
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == expanded and s.frame(expanded) == expected
+
+    s.chord("Left")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == last and s.shown(last)
+    assert s.frame(expanded)[0] > expected[0] and s.frame(expanded)[2:] == expected[2:]
+    s.ipc.focus_window(expanded)
+    s.settle_all()
 
 
 def check_dialog(s, first):
@@ -395,6 +605,9 @@ def strip_restart():
 if __name__ == "__main__":
     only = sys.argv[1] if len(sys.argv) > 1 else None
     if only in (None, "memory"): mode_memory()
+    if only in (None, "entry"): mode_entry()
+    if only in (None, "entry-keys"): entry_keys()
+    if only in (None, "workspace-entry"): workspace_entry()
     if only in (None, "keyboard"): keyboard_strip()
     if only in (None, "restart"): strip_restart()
     if only in (None, "outputs"):

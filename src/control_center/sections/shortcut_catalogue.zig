@@ -110,8 +110,8 @@ test "catalogue order and action identities survive binding removal and reorder"
     const disabled: []const keys.Keybind = &.{ configured[0], .{ .sym = q, .action = .noop } };
     try std.testing.expectEqualSlices(usize, &.{1}, try effectiveIndices(a, disabled));
     try std.testing.expect(applicable(.{ .set_depth = 0 }, .canvas));
-    try std.testing.expect(!applicable(.{ .set_depth = 0 }, .workspaces));
-    try std.testing.expect(applicable(.{ .workspace = 1 }, .workspaces));
+    try std.testing.expect(!applicable(.{ .set_depth = 0 }, .tiling));
+    try std.testing.expect(applicable(.{ .workspace = 1 }, .tiling));
 }
 
 test "factory layout actions survive unassignment and keep their Canvas order" {
@@ -134,7 +134,7 @@ test "factory layout actions survive unassignment and keep their Canvas order" {
         try std.testing.expectEqualStrings(name, restore);
     }
 
-    const workspaces = try actions(a, .workspaces, &.{}, &.{});
+    const workspaces = try actions(a, .tiling, &.{}, &.{});
     for (workspaces) |action| try std.testing.expect(action != .save_layout and action != .restore_layout);
 
     const key = (try keys.parseKeybind("Super+F1")).sym;

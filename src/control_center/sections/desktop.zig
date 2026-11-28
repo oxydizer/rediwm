@@ -1,5 +1,5 @@
 const i18n = @import("i18n");
-// Desktop canvas settings. All tree storage belongs to the open panel.
+// Desktop mode settings. All tree storage belongs to the open panel.
 const std = @import("std");
 const panel = @import("../panel.zig");
 const ui = @import("ui");
@@ -82,6 +82,23 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const cfg = cc.server.config.compositor;
+    const mode_card = try card(a, &.{
+        panel.sectionTitle(i18n.tr("Desktop mode")),
+        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Classic"), i18n.msg("Canvas"), i18n.msg("Tiling"), i18n.msg("Scrolling") }), .selected = @backingInt(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
+        text(switch (cfg.desktop_mode) {
+            .classic => i18n.tr("Move, resize and overlap windows."),
+            .tiling => i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."),
+            .scrolling => i18n.tr("New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."),
+            .canvas => i18n.tr("Pan and zoom the canvas."),
+        }, 12, true),
+    });
+    if (cfg.desktop_mode.tiled()) return workspaceTree(s, cc, a, mode_card);
+    if (cfg.desktop_mode == .classic) {
+        const items = [_]W{ mode_card, text(s.message, 12, true) };
+        var root = try container(a, .column, items[0..if (s.message.len == 0) 1 else 2]);
+        root.width = .{ .percent = 1 };
+        return root;
+    }
     const columns = cfg.canvas_columns;
     const rows = cfg.canvas_rows;
     const t = ui.theme.global;
@@ -152,16 +169,6 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     });
     fixed_row.justify = .space_between;
     fixed_row.@"align" = .center;
-    const mode_card = try card(a, &.{
-        panel.sectionTitle(i18n.tr("Desktop mode")),
-        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Workspaces"), i18n.msg("Scrolling") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
-        text(switch (cfg.desktop_mode) {
-            .workspaces => i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."),
-            .scrolling => i18n.tr("New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."),
-            .canvas => i18n.tr("Pan and zoom the canvas. Switching back restores your canvas positions and zoom."),
-        }, 12, true),
-    });
-    if (cfg.desktop_mode.tiled()) return workspaceTree(s, cc, a, mode_card);
     var root = try container(a, .column, &.{
         mode_card,
         body,

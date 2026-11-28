@@ -9,13 +9,23 @@ import tomllib
 from ipc_client import IPCClient, spawn_compositor, stop_process
 
 
+def desktop_mode():
+    mode = os.getenv("REDIWM_TEST_DESKTOP_MODE")
+    if mode is None:
+        mode = "tiling" if os.getenv("REDIWM_TEST_WORKSPACES") == "1" else "canvas"
+    assert mode in ("classic", "canvas", "tiling", "scrolling"), mode
+    return mode
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-shortcuts-") as directory:
         tmp = Path(directory)
         original = '# preserved\n[input]\npointer_speed = 0.4\n[keybinds]\n"Super+q" = "close_window"\n"Super+f" = "toggle_fullscreen"\n'
-        workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+        mode = desktop_mode()
+        workspace_mode = mode in ("tiling", "scrolling")
+        original = f'[compositor]\ndesktop_mode = "{mode}"\n' + original
         if workspace_mode:
-            original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
+            original = original.replace('[keybinds]', '[keybinds.workspace]')
             original += '"Super+c" = "noop"\n'
         else:
             original += '"Super+F1" = "save_layout home"\n"Super+Ctrl+F1" = "restore_layout home"\n'
@@ -40,8 +50,18 @@ def run():
                     return ipc.get_widget_tree("control_center")["widgets"]
 
                 def click(label, beside=None):
-                    tree = widgets()
-                    candidates = [w for w in tree if w["label"] == label or w["name"] == label]
+                    deadline = time.monotonic() + 3
+                    while True:
+                        tree = widgets()
+                        candidates = [w for w in tree if w["label"] == label or w["name"] == label]
+                        if candidates:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise AssertionError(
+                                f"Missing widget {label!r}; available: "
+                                f"{[(w['label'], w['name']) for w in tree]}"
+                            )
+                        time.sleep(.05)
                     if beside is None:
                         widget = candidates[0]
                     else:
@@ -83,7 +103,7 @@ def run():
                         time.sleep(.05)
                     raise AssertionError(f"custom shortcut did not write {expected!r}")
 
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 assert has("Window Management") and has("Launcher")
                 assert has("Open System Monitor"), "existing shortcuts omitted System Monitor"
                 assert has("Ctrl+Alt+Delete")
@@ -248,7 +268,7 @@ def run():
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.action("open_control_center")
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 if not workspace_mode:
                     find_shortcut("layout: home")
                     assert has("Save layout: home") and has("Restore layout: home")
@@ -276,7 +296,7 @@ def run():
                 assert ipc.get_shell_state()["control_center"] is None
                 ipc.action("open_control_center")
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 before_reset = (tmp / "rediwm-config.toml").read_text()
                 click("Reset All Shortcuts")
                 assert has("Reset built-in shortcuts")
@@ -386,7 +406,7 @@ def run():
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.action("open_control_center")
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 find_shortcut("shell result")
                 assert commands() == {command_id: shell_command}
                 assert has(shell_command) and has("Not assigned")
@@ -409,8 +429,8 @@ def run():
 
 
 def run_reload_callbacks():
-    workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
-    mode = "workspaces" if workspace_mode else "canvas"
+    mode = desktop_mode()
+    workspace_mode = mode in ("tiling", "scrolling")
     table = "keybinds.workspace" if workspace_mode else "keybinds"
     close = '"Super+q" = "close_window"\n'
     full = '"Super+f" = "toggle_fullscreen"\n'
@@ -461,7 +481,7 @@ def run_reload_callbacks():
 
                 ipc.open_control_center()
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 for case, before, after, should_unassign in (
                     ("reordered", close + full, full + close, True),
                     ("inserted", close + full, extra + close + full, True),
@@ -528,8 +548,8 @@ def run_reload_callbacks():
 
 
 def run_text_shortcut_priority():
-    workspace = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
-    mode = "workspaces" if workspace else "canvas"
+    mode = desktop_mode()
+    workspace = mode in ("tiling", "scrolling")
     table = "keybinds.workspace" if workspace else "keybinds"
     with tempfile.TemporaryDirectory(prefix="rediwm-shortcut-text-") as directory:
         tmp = Path(directory)
@@ -568,7 +588,7 @@ def run_text_shortcut_priority():
 
                 ipc.open_control_center()
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 click("shortcut_search")
                 ipc.key_press("z")
                 time.sleep(.15)
@@ -625,7 +645,7 @@ def run_text_shortcut_priority():
                 time.sleep(.15)
                 assert not any(w["label"] == "Save shortcut" for w in widgets())
                 assert not marker.exists()
-                click("General")
+                click("general")
                 ipc.key_press("z")
                 time.sleep(.2)
                 assert marker.read_text() == "hit"
@@ -637,8 +657,8 @@ def run_text_shortcut_priority():
 
 def run_temporary_mode():
     workspace = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
-    persisted = "workspaces" if workspace else "canvas"
-    temporary = "canvas" if workspace else "workspaces"
+    persisted = "tiling" if workspace else "canvas"
+    temporary = "canvas" if workspace else "tiling"
     original = (
         f'[compositor]\ndesktop_mode = "{persisted}"\n'
         '[keybinds]\n"Super+q" = "close_window"\n'
@@ -680,7 +700,7 @@ def run_temporary_mode():
 
                 ipc.open_control_center()
                 time.sleep(.3)
-                click("Keyboard Shortcuts")
+                click("shortcuts")
                 click("shortcut_search")
                 ipc.type_text("Close Window")
                 time.sleep(.15)
@@ -694,7 +714,7 @@ def run_temporary_mode():
                 expect_mode(temporary, persisted)
 
                 bindings = disk()["keybinds"]
-                if temporary == "workspaces":
+                if temporary == "tiling":
                     assert bindings["workspace"]["Super+F12"] == "close_window"
                     assert bindings["Super+q"] == "close_window"
                 else:

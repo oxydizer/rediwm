@@ -15,6 +15,8 @@ pub const Kind = enum { directory, regular, other };
 
 pub const Entry = struct {
     size: u64,
+    /// Allocated 512-byte blocks.
+    blocks: u64,
     nlink: u64,
     ino: u64,
     /// Equal for entries on the same file system.
@@ -135,11 +137,12 @@ const statx_attr_mount_root: u64 = 0x2000;
 
 fn linuxStat(dir_fd: c_int, name: [*:0]const u8, flags: u32) ?Entry {
     var stx: linux.Statx = undefined;
-    const rc = linux.statx(dir_fd, name, flags | linux.AT.STATX_DONT_SYNC, linux.STATX{ .SIZE = true, .NLINK = true, .INO = true, .TYPE = true }, &stx);
+    const rc = linux.statx(dir_fd, name, flags | linux.AT.STATX_DONT_SYNC, linux.STATX{ .SIZE = true, .BLOCKS = true, .NLINK = true, .INO = true, .TYPE = true }, &stx);
     if (linux.errno(rc) != .SUCCESS) return null;
     const type_bits = stx.mode & linux.S.IFMT;
     return .{
         .size = stx.size,
+        .blocks = stx.blocks,
         .nlink = stx.nlink,
         .ino = stx.ino,
         .dev = (@as(u64, stx.dev_major) << 32) | stx.dev_minor,
@@ -164,6 +167,7 @@ fn freebsdEntry(info: *const std.c.Stat) Entry {
     const type_bits = info.mode & std.posix.S.IFMT;
     return .{
         .size = @intCast(@max(info.size, 0)),
+        .blocks = @intCast(@max(info.blocks, 0)),
         .nlink = @intCast(info.nlink),
         .ino = @intCast(info.ino),
         .dev = @intCast(info.dev),

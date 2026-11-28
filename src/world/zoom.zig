@@ -54,6 +54,7 @@ pub fn nearestZoom(world: *World, value: f64) f64 {
 }
 
 pub fn setZoomTarget(world: *World, target_z: f64, next: usize, x: f64, y: f64) void {
+    if (world.workspaces.mode != .canvas) return;
     world.mini_map.show(world.server, x, y);
     if (world.pinching) world.endPinch(false);
     if (next == world.camera.zoom_index and !world.zoom_anim.active() and

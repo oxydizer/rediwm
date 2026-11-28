@@ -182,11 +182,17 @@ pub fn commitPosition(toplevel: *Toplevel, x: i32, y: i32, update_scene: bool) v
                     const geom = toplevel.clientSurfaceGeometry();
                     if (geom.width > 0 and geom.height > 0) {
                         const n = toplevel.surfaceScale();
+                        const target = if (toplevel.scroll_cover)
+                            toplevel.forcedGeometry()
+                        else if (!toplevel.maximized and !toplevel.fullscreen)
+                            toplevel.auto_target
+                        else
+                            null;
                         adapter.configure(
                             xscale.surfacePosition((x + toplevel.borderWidth()), n),
                             xscale.surfacePosition((y + toplevel.titlebarHeight()), n),
-                            if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) xscale.surfaceLength(toplevel.auto_target.?.width, n) else geom.width,
-                            if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) xscale.surfaceLength(toplevel.auto_target.?.height, n) else geom.height,
+                            if (target) |size| xscale.surfaceLength(size.width, n) else geom.width,
+                            if (target) |size| xscale.surfaceLength(size.height, n) else geom.height,
                         );
                     }
                 },

@@ -5,10 +5,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 pub const Box = struct { x: i32, y: i32, width: i32, height: i32 };
 pub const Key = struct { id: u64, group: bool = false };
+pub const Cover = enum { none, maximized, fullscreen };
 pub const Member = struct {
     key: Key,
     order: u64 = 0,
     active: bool = true,
+    /// Scrolling can expand this member in place.
+    cover: Cover = .none,
     min_width: i32 = 1,
     min_height: i32 = 1,
     max_width: i32 = 0,

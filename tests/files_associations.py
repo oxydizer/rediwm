@@ -63,7 +63,7 @@ def check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimag
     time.sleep(.3)
 
     def add_appimage():
-        click(260, 160, 273)
+        click(260, 130, 273)
         key(108)
         key(108)
         key(28)
@@ -214,13 +214,13 @@ def run():
                     ipc.screenshot(path=str(screenshot))
                     with Image.open(screenshot) as image:
                         return all(image.convert("RGB").getpixel((int(box["x"] + 278 + i % 3 * 239),
-                            int(box["y"] + 176 + i // 3 * 156))) == colour for i, colour in enumerate(expected))
+                            int(box["y"] + 146 + i // 3 * 156))) == colour for i, colour in enumerate(expected))
                 wait_for(correct_icons, "MIME/app/fallback icon pixels differ")
                 # Real GIO opening must honor the same association, including %f
                 # argument handling for spaces and punctuation in the filename.
                 for i, name, app in ((0, "a model #.scad", "openscad"), (2, "c.override", "override")):
                     marker.unlink(missing_ok=True)
-                    ipc.move_cursor(int(box["x"] + 260 + i * 239), int(box["y"] + 160))
+                    ipc.move_cursor(int(box["x"] + 260 + i * 239), int(box["y"] + 130))
                     for pressed in (True, False):
                         ipc.action('pointer_button', {"button": 272, "pressed": pressed})
                     for pressed in (True, False):
@@ -248,7 +248,7 @@ def run():
                     assert ImageChops.difference(before, after).getbbox() is None, "dialog titlebar did not move"
 
                 def picker():
-                    click(260, 160, 273)
+                    click(260, 130, 273)
                     key(108)  # Open With is exactly one row below Open.
                     key(28)
                     time.sleep(.15)
@@ -257,7 +257,7 @@ def run():
                 # change only the chosen bit, and Alt+Enter opens the same card.
                 target = home / 'a model #.scad'
                 target.chmod(0o640)
-                click(260, 160, 273)
+                click(260, 130, 273)
                 key(103)  # Up wraps from Open to Properties.
                 key(28)
                 time.sleep(.2)
@@ -275,7 +275,7 @@ def run():
                          "Properties changed unrelated permission bits")
                 click(740, 35)  # Close uses the moved chrome position.
                 time.sleep(.2)
-                click(260, 160)
+                click(260, 130)
                 ipc.action('key', {"keycode": 56, "pressed": True})
                 key(28)
                 ipc.action('key', {"keycode": 56, "pressed": False})
@@ -300,7 +300,7 @@ def run():
                 key(1)
                 time.sleep(.2)
                 # The bottom row remains keyboard accessible at minimum size.
-                click(260, 160, 273)
+                click(260, 130, 273)
                 key(103)
                 key(28)
                 ipc.action('set_window_size', {"id": win["id"], "width": 360, "height": 280})
@@ -365,7 +365,7 @@ def run():
                          "Open With did not save the default")
                 marker.unlink()
                 time.sleep(.3)  # Wait for the directory refresh following Open.
-                click(260, 160)
+                click(260, 130)
                 key(28)
                 wait_for(marker.exists, "ordinary Open ignored the chosen default")
                 assert marker.read_text() == 'alternate\n' + str(home / 'a model #.scad')
@@ -418,8 +418,8 @@ def run():
                 key(63)  # Refresh the directory listing.
                 time.sleep(.4)
                 marker.unlink(missing_ok=True)
-                click(738, 316)
-                click(738, 316)
+                click(738, 286)
+                click(738, 286)
                 wait_for(marker.exists, "double-click ignored the video MIME default")
                 assert marker.read_text() == 'celluloid\n' + str(video)
 
@@ -428,7 +428,7 @@ def run():
                 folder.mkdir()
                 key(63)  # F5 refresh.
                 time.sleep(.4)
-                click(260, 160, 273)
+                click(260, 130, 273)
                 key(108)
                 key(28)
                 key(28)  # Open the selected folder; a modal would intercept this.

@@ -24,7 +24,7 @@ def run():
         trigger = tmp / "unplug"
         reconnect = tmp / "replug"
         workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
-        config = '[compositor]\nxwayland = false\n' + ('desktop_mode = "workspaces"\n[keybinds.workspace]\n' if workspace_mode else '[keybinds]\n') + '"F12" = "quit"\n'
+        config = '[compositor]\nxwayland = false\n' + ('desktop_mode = "tiling"\n[keybinds.workspace]\n' if workspace_mode else '[keybinds]\n') + '"F12" = "quit"\n'
         compositor, log = spawn_compositor(
             tmp, outputs="2", config_content=config,
             env_extra={"LD_PRELOAD": str(hook), "REDIWM_TEST_UNPLUG": str(trigger),

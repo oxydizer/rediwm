@@ -13,7 +13,7 @@ pub fn geometry(t: theme.Theme) [6]f32 {
 pub fn width(frame_width: i32, state: chrome.ChromeState) f32 {
     const t = theme.global;
     if (state.tabs.tabs.len > 0 or t.window_title_plate[3] <= 0) return 0;
-    const controls = chrome.controlRectScaled(state.controlsWidth(frame_width), .minimize, state.density);
+    const controls = chrome.controlRectFor(state.controlsWidth(frame_width), .minimize, state.metrics());
     return @max(0, @min(t.window_title_plate_width * state.density, @as(f32, @floatFromInt(controls.x)) - t.window_title_plate_control_gap * state.density));
 }
 
@@ -27,7 +27,7 @@ pub fn polygon(frame_width: i32, state: chrome.ChromeState) ?shape.Resolved {
     if (w <= 0) return null;
     const t = theme.global;
     const d = state.density;
-    const h = t.chrome_height * d;
+    const h = if (state.tabs.layout == .standard) t.chrome_height * d else @as(f32, @floatFromInt(state.metrics().titlebarHeight()));
     const inset = t.window_title_plate_inset * d;
     // An outline's cut corner is followed by `distance`, at the same margin
     // as the top; without one the plate keeps clear of the control insets.
@@ -128,7 +128,8 @@ pub fn outlineKey(frame_width: i32, state: chrome.ChromeState) u64 {
     const outline = state.outline orelse return 0;
     const p = polygon(frame_width, state) orelse return 0;
     const reach = theme.global.window_title_plate_inset * state.density + 1;
-    return shape.localKey(outline, 0, 0, right(p), theme.global.chrome_height * state.density, reach) | 1;
+    const band = if (state.tabs.layout == .standard) theme.global.chrome_height * state.density else @as(f32, @floatFromInt(state.metrics().titlebarHeight()));
+    return shape.localKey(outline, 0, 0, right(p), band, reach) | 1;
 }
 
 pub fn color() @import("chrome_paint.zig").Color {

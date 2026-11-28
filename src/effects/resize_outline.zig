@@ -7,7 +7,7 @@ const Point = ribbon.Point;
 pub const Box = struct { x: f32, y: f32, width: f32, height: f32 };
 pub const Pull = struct {
     edges: @import("../resize.zig").Edges,
-    // Fractional grab position on the original window, for a single-edge drag.
+    // Fractional pointer position on the live window, for a single-edge drag.
     anchor: Point = .{ .x = 0.5, .y = 0.5 },
 };
 pub const Outline = struct {
@@ -51,12 +51,22 @@ pub fn resolve(width: f32, height: f32, target: Box, radius: f32, current_polygo
             .balanced => 59,
             .high => 63,
         };
-        const steps = @max(1, budget / a.count);
+        const horizontal = pull.edges.left or pull.edges.right;
+        const vertical = pull.edges.top or pull.edges.bottom;
+        const single_edge = horizontal != vertical;
+        const anchor = if (horizontal) pull.anchor.y * height else pull.anchor.x * width;
+        const steps = @max(if (single_edge) @as(usize, 2) else 1, budget / a.count);
         for (0..a.count) |i| {
             const next = (i + 1) % a.count;
+            const from = polyPoint(a, i);
+            const to = polyPoint(a, next);
+            const start = if (horizontal) from.y else from.x;
+            const end = if (horizontal) to.y else to.x;
+            const split = if (single_edge and start != end) (anchor - start) / (end - start) else 0;
             for (0..steps) |j| {
-                const t = @as(f32, @floatFromInt(j)) / @as(f32, @floatFromInt(steps));
-                const p = mix(polyPoint(a, i), polyPoint(a, next), t);
+                // Sample the pull's peak explicitly so it moves smoothly on straight sides.
+                const t = if (split > 0 and split < 1) splitSample(j, steps, split) else ratio(j, steps);
+                const p = mix(from, to, t);
                 var q = mix(polyPoint(b, i), polyPoint(b, next), t);
                 q.x += target.x;
                 q.y += target.y;
@@ -103,7 +113,7 @@ fn rounded(result: *Outline, width: f32, height: f32, target: Box, radius: f32, 
         const tb = translated(arc(target.width, target.height, target_radii[next], next, angle), target);
         const steps: usize = if (curved[corner]) curve_steps else 1;
         for (1..steps) |step| {
-            var t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(steps));
+            var t = ratio(step, steps);
             if (!corner_grab) {
                 // Include the exact grab point, even if it is off-centre.
                 const at = switch (corner) {
@@ -112,7 +122,7 @@ fn rounded(result: *Outline, width: f32, height: f32, target: Box, radius: f32, 
                     2 => 1 - fraction(pull.anchor.y * height, height, r),
                     else => fraction(pull.anchor.x * width, width, r),
                 };
-                t = if (t <= 0.5) at * t * 2 else at + (1 - at) * (t - 0.5) * 2;
+                t = splitSample(step, steps, at);
             }
             result.append(mix(a, b, t), mix(ta, tb, t), width, height, r, pull);
         }
@@ -143,6 +153,16 @@ fn square(x: f32) f32 {
     return x * x;
 }
 
+fn ratio(numerator: usize, denominator: usize) f32 {
+    return @as(f32, @floatFromInt(numerator)) / @as(f32, @floatFromInt(denominator));
+}
+
+fn splitSample(step: usize, steps: usize, at: f32) f32 {
+    const midpoint = steps / 2;
+    return if (step <= midpoint) at * ratio(step, midpoint) else at + (1 - at) * ratio(step - midpoint, steps - midpoint);
+}
+
 fn bell(value: f32, at: f32) f32 {
-    return square(if (value <= at) value / @max(0.001, at) else (1 - value) / @max(0.001, 1 - at));
+    if (value == at) return 1;
+    return square(if (value < at) value / at else (1 - value) / (1 - at));
 }

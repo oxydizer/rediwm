@@ -886,8 +886,8 @@ msgid "Canvas size"
 msgstr "Taille du canevas"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Canevas · Préréglage RediWM"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Classique et Canevas · Préréglage RediWM"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1122,8 +1122,8 @@ msgid "Choose your window layout"
 msgstr "Choisissez la disposition de vos fenêtres"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Classique (superposition)"
+msgid "Classic"
+msgstr "Classique"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -2721,6 +2721,10 @@ msgstr "Bon"
 msgid "Group"
 msgstr "Groupe"
 
+#: src/files/properties.zig
+msgid "On disk"
+msgstr "Sur le disque"
+
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr "Groupes"
@@ -4082,8 +4086,8 @@ msgid "Pan Up"
 msgstr "Se déplacer vers le haut"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Déplacez et zoomez le canevas. Le retour à ce mode rétablit vos positions et votre zoom."
+msgid "Pan and zoom the canvas."
+msgstr "Déplacez et zoomez le canevas."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5544,6 +5548,10 @@ msgid "Swap the focused tile up."
 msgstr "Échanger la fenêtre active avec celle du dessus."
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Basculer entre les derniers modes de superposition et de mosaïque utilisés."
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr "Passer au profil d'alimentation suivant."
 
@@ -6043,9 +6051,13 @@ msgstr "Ancrer à droite"
 msgid "Tile Up"
 msgstr "Ancrer en haut"
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
 msgstr "Mosaïque"
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
+msgstr "Mosaïque et défilement · Préréglage de type Hyprland"
 
 #: src/control_center/sections/region.zig
 msgid "Time"
@@ -6608,14 +6620,6 @@ msgstr "Disposition des espaces de travail"
 msgid "Workspace {n}"
 msgstr "Espace de travail {n}"
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr "Espaces de travail"
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr "Espaces de travail · Préréglage de type Hyprland"
-
 #: src/files/properties.zig
 msgid "Write"
 msgstr "Écriture"
@@ -6765,8 +6769,8 @@ msgid "calendar monday sunday"
 msgstr "calendrier lundi dimanche"
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr "canevas espaces de travail mosaïque"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "classique superposition canevas mosaïque défilement espaces de travail"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

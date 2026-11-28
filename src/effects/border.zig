@@ -3,14 +3,15 @@ const std = @import("std");
 const ribbon = @import("ribbon.zig");
 const shape = @import("ui").window_shape;
 
+pub fn glowReach(preset: ribbon.Preset, scale: f32) f32 {
+    return std.math.clamp(preset.width_px * 0.4, 6, 24) / scale;
+}
+
 pub fn mesh(width: f32, height: f32, radius: f32, polygon: ?shape.Resolved, reach: f32, strength: f32, preset: ribbon.Preset) ribbon.Geometry {
     var result: ribbon.Geometry = .{};
     if (width <= 0 or height <= 0 or reach <= 0 or strength <= 0) return result;
     result.mesh.edge = 1;
-    result.mesh.color = preset.color;
-    result.mesh.core_color = preset.core_color;
-    result.mesh.color[3] *= preset.opacity;
-    result.mesh.core_color[3] *= preset.opacity;
+    result.mesh.setColors(preset);
     if (polygon) |poly| {
         var area: f64 = 0;
         for (poly.points[0..poly.count], 0..) |p, i| {
@@ -68,10 +69,7 @@ pub fn path(source: []const ribbon.Point, reach: f32, strength: f32, preset: rib
     if (len < 3) return result;
     const points = unique[0..len];
     result.mesh.edge = 1;
-    result.mesh.color = preset.color;
-    result.mesh.core_color = preset.core_color;
-    result.mesh.color[3] *= preset.opacity;
-    result.mesh.core_color[3] *= preset.opacity;
+    result.mesh.setColors(preset);
     var area: f64 = 0;
     for (points, 0..) |p, i| {
         const next = points[(i + 1) % points.len];

@@ -97,6 +97,7 @@ pub fn handleWindowAction(
                     _ = toplevel.requestSize(saved.width, saved.height);
                 }
             }
+            @import("../workspaces.zig").keepClassicWindowVisible(toplevel);
             toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
             return .{ .ok = .handled };
         },

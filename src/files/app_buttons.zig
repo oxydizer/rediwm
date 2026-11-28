@@ -414,19 +414,9 @@ fn contentPress(self: *App, button: u32, x: f64, y: f64, now: i64) void {
     if (self.itemAt(x, y)) |idx| {
         if (button == 0x110) {
             if (self.sizeButtonRect(idx)) |rect| {
-                if (rect.contains(x, y)) {
-                    if (self.folder_sizes.get(self.items.items[idx].path)) |sz| {
-                        switch (sz) {
-                            .running => {
-                                self.toggleFolderSize(idx);
-                                return;
-                            },
-                            .done => {},
-                        }
-                    } else {
-                        self.toggleFolderSize(idx);
-                        return;
-                    }
+                if (rect.contains(x, y) and self.folderSizeClickable(self.items.items[idx])) {
+                    self.toggleFolderSize(idx);
+                    return;
                 }
             }
         }

@@ -141,12 +141,11 @@ pub const source =
     \\env = "none"                 # none | fcitx | ibus; daemon uses [[autostart]]
     \\
     \\[compositor]
-    \\# Optional tiled workspaces; canvas remains the default. "workspaces" splits
-    \\# the screen between windows, "scrolling" puts them in columns on a strip
-    \\# that scrolls. Workspace shortcuts are overridden separately in
-    \\# [keybinds.workspace]. Super+Shift+W (toggle_desktop_mode) switches
-    \\# between Canvas and the tiled mode used last.
-    \\desktop_mode = "canvas"     # canvas | workspaces | scrolling
+    \\# "classic" stacks windows in a fixed view. "canvas" adds pan and zoom.
+    \\# "tiling" splits the screen; "scrolling" puts windows on a strip.
+    \\# Override workspace shortcuts in [keybinds.workspace]. Super+Shift+W
+    \\# (toggle_desktop_mode) switches between the last stacking and tiled modes.
+    \\desktop_mode = "canvas"     # classic | canvas | tiling | scrolling
     \\# Scrolling: the widths Super+W steps a column through (fractions of the
     \\# screen), a new column's width, and when focus centres a column:
     \\# never, on_overflow (one wider than the screen) or always.
@@ -257,8 +256,8 @@ pub const source =
     \\# preset = "soft_flame"
     \\# [effects.presets.soft_flame]
     \\# type = "flame_ribbon"
-    \\# color = "#ff1820"
-    \\# core_color = "#ffe0c0"
+    \\# color = "#ff1820"          # overrides the shell accent
+    \\# core_color = "#ffe0c0"     # overrides a lighter shade of color
     \\# opacity = 0.9
     \\# width_px = 56
     \\# max_length_px = 420
@@ -435,7 +434,7 @@ pub const source =
     \\"super+q"           = "close_window"
     \\"super+f"           = "toggle_fullscreen"
     \\"super+m"           = "toggle_maximize"
-    \\# Canvas <-> Workspaces; the workspace preset keeps this key too
+    \\# Canvas <-> last tiled mode; the workspace preset keeps this key too
     \\"super+shift+w"     = "toggle_desktop_mode"
     \\# Halves and quarters; dragging a window to a screen edge snaps it too
     \\"super+shift+left"  = "tile_left"

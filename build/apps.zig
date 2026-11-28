@@ -14,13 +14,14 @@ pub const Apps = struct {
     images: *std.Build.Step.Compile,
     monitor: *std.Build.Step.Compile,
     calculator: *std.Build.Step.Compile,
+    rediterm: *std.Build.Step.Compile,
     editor: *std.Build.Step.Compile,
     pdf: *std.Build.Step.Compile,
     share_picker: *std.Build.Step.Compile,
 };
 
 /// Files (with its terminal and transfers helpers), Images, System Monitor,
-/// Calculator, the text editor, the PDF viewer and the share picker, with
+/// Calculator, RediTerm, the text editor, the PDF viewer and the share picker, with
 /// their desktop entries and build steps.
 pub fn add(ctx: Context) Apps {
     const b = ctx.b;
@@ -179,6 +180,25 @@ pub fn add(ctx: Context) Apps {
         calculator_step.dependOn(step);
     }
 
+    // RediTerm runs the Files terminal engine and its PTY helper.
+    const rediterm = b.addExecutable(.{
+        .name = "rediwm-terminal",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/rediterm_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    rediterm.root_module.addImport("wayland", wayland);
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| rediterm.root_module.linkSystemLibrary(lib, .{});
+    addFilesTerminal(b, rediterm.root_module, false);
+    const install_rediterm = b.addInstallArtifact(rediterm, .{});
+    const rediterm_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-terminal.desktop"), .prefix, "share/applications/rediwm-terminal.desktop");
+    const rediterm_icon = b.addInstallFileWithDir(b.path("data/rediwm-terminal.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-terminal.svg");
+    const rediterm_step = b.step("terminal", "Build RediTerm, the standalone terminal");
+    inline for (.{ &install_rediterm.step, &rediterm_entry.step, &rediterm_icon.step, &install_terminal.step, &terminal_license.step }) |step| {
+        b.getInstallStep().dependOn(step);
+        rediterm_step.dependOn(step);
+    }
+
     const editor = b.addExecutable(.{
         .name = "rediwm-editor",
         .root_module = b.createModule(.{ .root_source_file = b.path("src/editor_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
@@ -224,5 +244,5 @@ pub fn add(ctx: Context) Apps {
     share_picker.root_module.addImport("wayland", wayland);
     inline for (.{ "wayland-client", "xkbcommon" }) |lib| share_picker.root_module.linkSystemLibrary(lib, .{});
     b.installArtifact(share_picker);
-    return .{ .files = files, .images = images, .monitor = monitor, .calculator = calculator, .editor = editor, .pdf = pdf, .share_picker = share_picker };
+    return .{ .files = files, .images = images, .monitor = monitor, .calculator = calculator, .rediterm = rediterm, .editor = editor, .pdf = pdf, .share_picker = share_picker };
 }

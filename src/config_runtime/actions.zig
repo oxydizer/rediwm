@@ -18,7 +18,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         return;
     }
     if (action != .toggle_overview and !keybinds.isHardwareAction(action)) server.world.overview.cancel(&server.world);
-    if (server.world.workspaces.active) switch (action) {
+    if (server.world.workspaces.mode != .canvas) switch (action) {
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => return,
         else => {},
     };
@@ -311,14 +311,17 @@ fn cameraZoomReset(server: *Server) void {
 const Dir = enum { left, right, up, down };
 
 fn focusDirection(server: *Server, dir: Dir) void {
-    const focused = focusedToplevel(server) orelse return;
-    // A strip is navigated in its own order; culled columns have no place on screen.
-    if (@import("../scroll_tiling.zig").focus(server, focused, switch (dir) {
+    const scroll_tiling = @import("../scroll_tiling.zig");
+    const arrow: scroll_tiling.Arrow = switch (dir) {
         .left => .left,
         .right => .right,
         .up => .up,
         .down => .down,
-    })) return;
+    };
+    const current = focusedToplevel(server);
+    // A strip is navigated in its own order; culled columns have no place on screen.
+    if (scroll_tiling.focus(server, current, arrow)) return;
+    const focused = current orelse return;
     const fx = focused.x + @divTrunc(focused.chrome_width, 2);
     const fy = focused.y + @divTrunc(focused.chrome_height, 2);
     var best: ?*Toplevel = null;
@@ -478,6 +481,7 @@ pub fn restoreLayoutFromPath(server: *Server, path: []const u8) !void {
                 const c = window.canvas orelse continue;
                 top.restoreGeometryNow(.{ .x = c.geometry.x, .y = c.geometry.y, .width = c.geometry.width, .height = c.geometry.height });
                 top.setZoomOrigin(@min(c.zoom_index, camera_mod.zoom_levels.len - 1));
+                @import("../workspaces.zig").keepClassicWindowVisible(top);
             }
         }
         return;
@@ -506,6 +510,7 @@ pub fn restoreLayoutFromPath(server: *Server, path: []const u8) !void {
         } else {
             top.setPosition(row.x, row.y);
             top.setZoom(zoom_index, server.input.cursor.x, server.input.cursor.y);
+            @import("../workspaces.zig").keepClassicWindowVisible(top);
         }
     }
 }
@@ -560,6 +565,7 @@ pub const FlatRestore = struct {
                 top.setPosition(row.x, row.y);
                 top.setZoom(@min(row.zoom_index, camera_mod.zoom_levels.len - 1), server.input.cursor.x, server.input.cursor.y);
             }
+            @import("../workspaces.zig").keepClassicWindowVisible(top);
         }
     }
 };

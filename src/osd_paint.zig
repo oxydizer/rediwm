@@ -3,7 +3,7 @@ const std = @import("std");
 const ui = @import("ui");
 const Profile = @import("power_profiles.zig").Profile;
 
-pub const Kind = enum { volume, microphone, brightness, keyboard_backlight, caps_lock, power_profile, zoom };
+pub const Kind = enum { volume, microphone, brightness, keyboard_backlight, caps_lock, power_profile, zoom, window_zoom };
 const KeyboardLevel = struct {
     current: u32 = 0,
     maximum: u32 = 3,
@@ -22,12 +22,14 @@ pub const State = struct {
     active: bool = false, // muted for audio, enabled for Caps Lock
     profile: Profile = .balanced,
     keyboard: KeyboardLevel = .{},
+    window_id: ?u64 = null,
 };
 
 pub fn width(kind: Kind) i32 {
     return switch (kind) {
         .volume, .brightness => 304,
         .zoom => 320,
+        .window_zoom => 72,
         .power_profile, .keyboard_backlight => 212,
         .microphone, .caps_lock => 76,
     };
@@ -35,7 +37,9 @@ pub fn width(kind: Kind) i32 {
 pub fn hasLevel(kind: Kind) bool {
     return kind == .volume or kind == .brightness or kind == .zoom;
 }
-pub const height = 60;
+pub fn height(kind: Kind) i32 {
+    return if (kind == .window_zoom) 32 else 60;
+}
 const icon_size = 26;
 pub const slider_width = 182;
 const slider_height = 11;
@@ -46,14 +50,24 @@ pub fn paint(r: *ui.paint.Renderer, state: State) void {
     const track = t.app_divider;
     const wide = hasLevel(state.kind);
     const w: f32 = @floatFromInt(width(state.kind));
+    const h: f32 = @floatFromInt(height(state.kind));
+    const inset: f32 = if (state.kind == .window_zoom) 0 else 4;
     // Border uses the same premultiplied painter as the shell.
-    r.fillRect(4, 4, w - 8, height - 8, .{ .color = .{ t.window_bg[0], t.window_bg[1], t.window_bg[2], t.osd_opacity }, .radius = t.osd_radius, .border_width = 1, .border_color = t.osd_border });
+    r.fillRect(inset, inset, w - 2 * inset, h - 2 * inset, .{ .color = .{ t.window_bg[0], t.window_bg[1], t.window_bg[2], t.osd_opacity }, .radius = t.osd_radius, .border_width = 1, .border_color = t.osd_border });
+    if (state.kind == .window_zoom) {
+        var buf: [16]u8 = undefined;
+        const percent: u32 = @intFromFloat(@round(state.level * 100));
+        const label = std.fmt.bufPrint(&buf, "{d}%", .{percent}) catch unreachable;
+        r.drawTextCentered(4, 0, w - 8, h, .{ .content = label, .font_size = 16, .weight = 600, .color = white });
+        return;
+    }
     const icon: ui.layout.IconId = switch (state.kind) {
         .volume => if (state.active) .volume_muted else if (state.level < 0.4) .volume_low else .volume,
         .microphone => if (state.active) .mic_muted else .mic_outline,
         .brightness => .brightness,
         .keyboard_backlight => .keyboard,
         .zoom => .zoom_out,
+        .window_zoom => unreachable,
         .caps_lock => .caps_lock,
         .power_profile => switch (state.profile) {
             .power_saver => .power_saver,
@@ -107,7 +121,7 @@ test "OSD pixels are premultiplied at integer and fractional scales" {
     for ([_]f32{ 1, 1.5, 2 }) |scale| {
         inline for (std.meta.tags(Kind)) |kind| {
             const w: i32 = @intFromFloat(@as(f32, @floatFromInt(width(kind))) * scale);
-            const h: i32 = @intFromFloat(height * scale);
+            const h: i32 = @intFromFloat(@as(f32, @floatFromInt(height(kind))) * scale);
             const pixels = try std.testing.allocator.alloc(u32, @intCast(w * h));
             defer std.testing.allocator.free(pixels);
             @memset(pixels, 0);

@@ -304,6 +304,7 @@ maximize_restore: ?RestoreGeometry = null,
 fullscreen_restore: ?RestoreGeometry = null,
 maximize_target: ?RestoreGeometry = null,
 fullscreen_target: ?RestoreGeometry = null,
+scroll_cover: bool = false,
 // Automatic rectangles are independent of manual half/quarter tiles.
 // Explicit floating placement opts a member out; overflow can retry later.
 auto_target: ?RestoreGeometry = null,
@@ -477,6 +478,7 @@ pub const CloseSnapshot = struct {
 pub const hasServerDecorations = toplevel_chrome_metrics.hasServerDecorations;
 pub const chromeDensity = toplevel_chrome_metrics.chromeDensity;
 pub const titlebarHeight = toplevel_chrome_metrics.titlebarHeight;
+pub const chromeMetrics = toplevel_chrome_metrics.chromeMetrics;
 pub const borderWidth = toplevel_chrome_metrics.borderWidth;
 pub const hasWorkspaceFocusBorder = toplevel_chrome_metrics.hasWorkspaceFocusBorder;
 pub const borderColor = toplevel_chrome_metrics.borderColor;
@@ -588,6 +590,8 @@ pub const floatingGeometry = toplevel_layout.floatingGeometry;
 pub const setTiled = toplevel_layout.setTiled;
 pub const setTiledOn = toplevel_layout.setTiledOn;
 pub const setAutoTile = toplevel_layout.setAutoTile;
+pub const setScrollingCover = toplevel_layout.setScrollingCover;
+pub const prepareAutoTile = toplevel_layout.prepareAutoTile;
 pub const clearAutoTile = toplevel_layout.clearAutoTile;
 pub const untile = toplevel_layout.untile;
 pub const leaveLayout = toplevel_layout.leaveLayout;

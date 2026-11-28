@@ -5,8 +5,8 @@ const fields = @import("loader_fields.zig");
 
 pub const Quality = enum { low, balanced, high };
 pub const Preset = struct {
-    color: [4]f32 = .{ 1, 24.0 / 255.0, 32.0 / 255.0, 1 },
-    core_color: [4]f32 = .{ 1, 224.0 / 255.0, 192.0 / 255.0, 1 },
+    color: ?[4]f32 = null,
+    core_color: ?[4]f32 = null,
     opacity: f32 = 0.9,
     width_px: f32 = 56,
     max_length_px: f32 = 420,

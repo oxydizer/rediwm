@@ -1,5 +1,5 @@
 //! The pointer pulls an elastic outline while the real client size follows
-//! smoothly. One membrane fills the gap from the window to the curved boundary.
+//! smoothly. A narrow band follows the curved boundary.
 const std = @import("std");
 const Top = @import("../Toplevel.zig");
 const Host = @import("window_move.zig");
@@ -8,27 +8,39 @@ const ribbon = @import("ribbon.zig");
 const resize = @import("../resize.zig");
 const Follow = @import("resize_follow.zig");
 const geometry = @import("resize_mesh.zig");
+const Vec = @import("../camera.zig").Vec;
 const border = @import("border.zig");
 const Self = @This();
 
 snapshot: resize.ResizeSnapshot,
 follow: Follow,
+cursor: Vec,
 last_motion: ?i64 = null,
 released: ?i64 = null,
 last_geometry: ?[5]f64 = null,
 dirty: bool = true,
 
 pub fn init(top: *Top) Self {
-    const session = top.server.input.resize_session.?;
-    return .{ .snapshot = session.snapshot, .follow = Follow.init(session.latest_desired_size, anim.nowMs()) };
+    const server = top.server;
+    const session = server.input.resize_session.?;
+    return .{
+        .snapshot = session.snapshot,
+        .follow = Follow.init(session.latest_desired_size, anim.nowMs()),
+        .cursor = server.world.toWorld(server.input.cursor.x, server.input.cursor.y),
+    };
 }
 
-pub fn motion(self: *Self, top: *Top) void {
+pub fn motion(self: *Self, top: *Top, cursor: Vec) void {
     const session = top.server.input.resize_session orelse return;
-    if (std.meta.eql(self.follow.target, session.latest_desired_size)) return;
-    const now = anim.nowMs();
-    self.follow.retarget(session.latest_desired_size, now, anim.speed());
-    self.last_motion = now;
+    const horizontal = self.snapshot.edges.left or self.snapshot.edges.right;
+    const vertical = self.snapshot.edges.top or self.snapshot.edges.bottom;
+    const along_edge = horizontal != vertical and (if (horizontal) cursor.y != self.cursor.y else cursor.x != self.cursor.x);
+    self.cursor = cursor;
+    if (!std.meta.eql(self.follow.target, session.latest_desired_size)) {
+        const now = anim.nowMs();
+        self.follow.retarget(session.latest_desired_size, now, anim.speed());
+        self.last_motion = now;
+    } else if (!along_edge or self.last_motion == null) return;
     self.dirty = true;
     top.server.scheduleFrames();
 }
@@ -75,16 +87,16 @@ pub fn update(self: *Self, host: *Host, top: *Top, now: i64) void {
     const polygon = if (decorated) top.shapePolygon(top.chrome_width, top.chrome_height) else null;
     const target_polygon = if (decorated) top.shapePolygon(@intFromFloat(target.width), @intFromFloat(target.height)) else null;
     const phase = @as(f32, @floatFromInt(@mod(now, 100000))) * 0.003 * host.preset.turbulence;
-    const reach = std.math.clamp(host.preset.width_px * 0.4, 6, 24) / scale;
+    const reach = border.glowReach(host.preset, scale);
+    const width: f32 = @floatFromInt(top.chrome_width);
+    const height: f32 = @floatFromInt(top.chrome_height);
     const pull: geometry.Pull = .{ .edges = self.snapshot.edges, .anchor = .{
-        .x = @floatCast((self.snapshot.initial_cursor_x - @as(f64, @floatFromInt(self.snapshot.initial_frame_x)) / top.worldScale()) /
-            @as(f64, @floatFromInt(self.snapshot.initial_client_width + 2 * self.snapshot.frame_border))),
-        .y = @floatCast((self.snapshot.initial_cursor_y - @as(f64, @floatFromInt(self.snapshot.initial_frame_y)) / top.worldScale()) /
-            @as(f64, @floatFromInt(self.snapshot.initial_client_height + self.snapshot.titlebar_height + self.snapshot.footer_height))),
+        .x = @floatCast((self.cursor.x - origin.x) / (scale * @max(1, width))),
+        .y = @floatCast((self.cursor.y - origin.y) / (scale * @max(1, height))),
     } };
-    const meshes = geometry.build(@floatFromInt(top.chrome_width), @floatFromInt(top.chrome_height), target, radius, polygon, target_polygon, pull, reach, strength, phase, host.preset);
+    const meshes = geometry.build(width, height, target, radius, polygon, target_polygon, pull, reach, strength, phase, host.preset);
     host.visible = false;
     host.present(0, meshes.fill, origin, scale);
-    host.present(1, meshes.edge, origin, scale);
-    host.present(2, border.mesh(@floatFromInt(top.chrome_width), @floatFromInt(top.chrome_height), radius, polygon, reach, strength, host.preset), origin, scale);
+    const halo = if (meshes.edge.mesh.count > 0) meshes.edge else border.mesh(width, height, radius, polygon, reach, strength, host.preset);
+    host.present(1, halo, origin, scale);
 }

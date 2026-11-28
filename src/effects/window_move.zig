@@ -114,10 +114,10 @@ pub fn stop(server: *Server) void {
     }
 }
 
-pub fn resizeMotion(top: *Top) void {
+pub fn resizeMotion(top: *Top, cursor: @import("../camera.zig").Vec) void {
     const self = top.server.window_ribbons orelse return;
     if (self.id != top.id or !self.emitting) return;
-    if (self.resizing) |*state| state.motion(top);
+    if (self.resizing) |*state| state.motion(top, cursor);
 }
 
 pub fn resizeSize(top: *Top, now: i64, requested: @import("../resize.zig").ClientSize) @import("../resize.zig").ClientSize {
@@ -220,7 +220,7 @@ fn update(self: *Self, top: *Top, now: i64) void {
     self.present(3, move_trail.between(&trails), origin, scale);
     const age = if (self.last_move) |last| std.math.clamp(@as(f32, @floatFromInt(now - last)) / @as(f32, @floatFromInt(@min(self.preset.lifetime_ms, ribbon.stop_fade_ms))), 0, 1) else 1;
     const decorated = top.hasServerDecorations() and @import("../chrome.zig").shapes;
-    const halo = border.mesh(@floatFromInt(top.chrome_width), @floatFromInt(top.chrome_height), if (decorated) top.cornerRadius() else 0, if (decorated) top.shapePolygon(top.chrome_width, top.chrome_height) else null, std.math.clamp(self.preset.width_px * 0.4, 6, 24) / scale, (1 - age) * (1 - age), self.preset);
+    const halo = border.mesh(@floatFromInt(top.chrome_width), @floatFromInt(top.chrome_height), if (decorated) top.cornerRadius() else 0, if (decorated) top.shapePolygon(top.chrome_width, top.chrome_height) else null, border.glowReach(self.preset, scale), (1 - age) * (1 - age), self.preset);
     self.present(2, halo, origin, scale);
 }
 

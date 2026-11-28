@@ -1224,10 +1224,6 @@ msgstr ""
 msgid "Canvas size"
 msgstr ""
 
-#: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr ""
-
 #: src/control_center/sections/input_sources.zig
 msgid "Caps Lock"
 msgstr ""
@@ -1524,8 +1520,12 @@ msgstr ""
 msgid "Circular"
 msgstr ""
 
-#: src/control_center/welcome.zig
-msgid "Classic (stacking)"
+#: src/control_center/sections/desktop.zig
+msgid "Classic"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Classic and Canvas · RediWM preset"
 msgstr ""
 
 #: src/editor/app_recent.zig
@@ -3652,6 +3652,10 @@ msgstr ""
 msgid "Group"
 msgstr ""
 
+#: src/files/properties.zig
+msgid "On disk"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr ""
@@ -4712,7 +4716,7 @@ msgstr ""
 msgid "Move up"
 msgstr ""
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Move, resize and overlap windows."
 msgstr ""
 
@@ -5598,7 +5602,7 @@ msgid "Pan Up"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
+msgid "Pan and zoom the canvas."
 msgstr ""
 
 #: src/control_center/sections/input.zig
@@ -7496,7 +7500,7 @@ msgid "Switch Desktop Mode"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Switch between Canvas and Workspaces."
+msgid "Switch between the last stacking and tiled modes."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -8143,8 +8147,12 @@ msgstr ""
 msgid "Tile Up"
 msgstr ""
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -8839,14 +8847,6 @@ msgstr ""
 msgid "Workspace {n}"
 msgstr ""
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr ""
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr ""
-
 #: src/files/app_paint.zig
 msgid "Write"
 msgstr ""
@@ -9064,15 +9064,15 @@ msgid "can only be removed here"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr ""
-
-#: src/control_center/search_index.zig
 msgid "chooser portal"
 msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "chrome tint"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "classic stacking canvas tiling scrolling workspaces"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -9991,6 +9991,11 @@ msgctxt "desktop:Comment"
 msgid "Simple arithmetic calculator"
 msgstr ""
 
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Comment"
+msgid "Use the command line"
+msgstr ""
+
 #: data/rediwm-theme.desktop
 msgctxt "desktop:Comment"
 msgid "Validate and install a RediWM theme pack"
@@ -10016,6 +10021,11 @@ msgctxt "desktop:GenericName"
 msgid "File Manager"
 msgstr ""
 
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:GenericName"
+msgid "Terminal"
+msgstr ""
+
 #: data/rediwm-calculator.desktop
 msgctxt "desktop:Keywords"
 msgid "arithmetic;math;calculate;"
@@ -10029,6 +10039,11 @@ msgstr ""
 #: data/rediwm-monitor.desktop
 msgctxt "desktop:Keywords"
 msgid "process;task;CPU;memory;performance;"
+msgstr ""
+
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Keywords"
+msgid "shell;prompt;command;commandline;console;"
 msgstr ""
 
 #: data/rediwm-player.desktop
@@ -10061,7 +10076,12 @@ msgctxt "desktop:Name"
 msgid "PDF Viewer"
 msgstr ""
 
-#: data/rediwm.desktop
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Name"
+msgid "RediTerm"
+msgstr ""
+
+#: data/rediwm-release-safe.desktop data/rediwm.desktop
 msgctxt "desktop:Name"
 msgid "RediWM"
 msgstr ""

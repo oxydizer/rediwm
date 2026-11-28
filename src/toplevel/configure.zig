@@ -170,13 +170,19 @@ pub fn shapeKey(toplevel: *const Toplevel) u64 {
 /// all lay out against the frame less these.
 pub fn controlInsets(toplevel: *const Toplevel) window_shape.Insets {
     const polygon = toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height) orelse return .{};
-    const density = toplevel.chromeDensity();
+    const metrics = toplevel.chromeMetrics();
     const bar: f64 = @floatFromInt(toplevel.titlebarHeight());
-    const band: f64 = @floatFromInt((chrome.Metrics{ .density = density }).length(34));
+    if (metrics.layout != .standard) {
+        const control = chrome.controlRectFor(toplevel.chrome_width, .close, metrics);
+        const width: f64 = @floatFromInt(toplevel.chrome_width);
+        const rows = window_shape.rowInsets(polygon, width, if (metrics.layout == .files_tabs) chrome.Metrics.files_tab_top else @floatFromInt(control.y), if (metrics.layout == .files_tabs) bar else @floatFromInt(control.y + control.h));
+        return .{ .left = rows.left, .right = window_shape.rowInsets(polygon, width, @floatFromInt(control.y), @floatFromInt(control.y + control.h)).right };
+    }
+    const band: f64 = @floatFromInt(metrics.length(34));
     var insets = window_shape.rowInsets(polygon, @floatFromInt(toplevel.chrome_width), @max(0, (bar - band) / 2), @min(bar, (bar + band) / 2));
     if (theme.global.chrome_control_offset_y == 0) return insets;
     // The icon stays centred while controls may sit lower under a cut corner.
-    const control = chrome.controlRectScaled(toplevel.chrome_width, .close, density);
+    const control = chrome.controlRectFor(toplevel.chrome_width, .close, metrics);
     insets.right = window_shape.rowInsets(polygon, @floatFromInt(toplevel.chrome_width), @floatFromInt(control.y), @floatFromInt(control.y + control.h)).right;
     return insets;
 }

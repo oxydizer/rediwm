@@ -5,6 +5,7 @@ const scroll = @import("scroll_layout.zig");
 const Strip = scroll.Strip;
 const Member = scroll.Member;
 const Box = scroll.Box;
+const Key = scroll.Key;
 
 // 1000 wide with 10 px gaps: 980 between the outer gaps, so ½ is 485.
 const screen: Box = .{ .x = 100, .y = 50, .width = 1000, .height = 600 };
@@ -70,6 +71,13 @@ test "reveal scrolls the least, centres wide columns and stays in limits" {
     strip.extent += 1200 - 980;
     strip.reveal(members[2].key, .on_overflow);
     try testing.expectEqual(@as(f64, 990 + 600 - 490), strip.view);
+    // Once it fills the view it stays where a gesture left it.
+    strip.view = 1050;
+    try testing.expect(strip.columnCovers(2, 1050) and !strip.columnFits(2, 1050));
+    strip.reveal(members[2].key, .on_overflow);
+    try testing.expectEqual(@as(f64, 1050), strip.view);
+    strip.view = 0;
+    try testing.expect(!strip.columnCovers(2, 0));
     strip.reveal(members[2].key, .never);
     try testing.expectEqual(@as(f64, 990), strip.view);
     // A strip shorter than its viewport starts at the leading edge.

@@ -53,8 +53,9 @@ pub const Menu = struct {
                 .remove => i18n.tr("Remove from dock"),
                 .unpin => i18n.tr("Unpin from dock"),
                 .desktop_mode => |mode| switch (mode) {
+                    .classic => i18n.tr("Classic"),
                     .canvas => i18n.tr("Canvas"),
-                    .workspaces => i18n.tr("Workspaces"),
+                    .tiling => i18n.tr("Tiling"),
                     .scrolling => i18n.tr("Scrolling"),
                 },
             };
@@ -62,7 +63,7 @@ pub const Menu = struct {
     };
 
     fn actions(self: *const Menu) []const Action {
-        if (self.tray_menu == .desktop_mode) return &.{ .{ .desktop_mode = .canvas }, .{ .desktop_mode = .workspaces }, .{ .desktop_mode = .scrolling } };
+        if (self.tray_menu == .desktop_mode) return &.{ .{ .desktop_mode = .classic }, .{ .desktop_mode = .canvas }, .{ .desktop_mode = .tiling }, .{ .desktop_mode = .scrolling } };
         if (self.pinned) return if (self.target == null) &.{.unpin} else &.{ .close, .force_close, .unpin };
         // Only a shortcut can be removed; a running app always stays.
         if (self.shortcut != null and self.dock != null) return if (self.target == null) &.{.remove} else &.{ .close, .force_close, .remove };

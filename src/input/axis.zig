@@ -134,8 +134,9 @@ pub fn processAxis(
             return;
         }
     }
+    const canvas = input.server.world.workspaces.mode == .canvas;
     const desktop_zoom = input.isDesktopZoomHeld();
-    const target: ?*Toplevel = if (input.server.world.workspaces.active or desktop_zoom) null else switch (scroll_hit) {
+    const target: ?*Toplevel = if (!canvas or desktop_zoom) null else switch (scroll_hit) {
         .surface => |res| if (input.isAltHeld()) res.toplevel else null,
         .chrome => |res| if (input.isAltHeld() or (res.sy >= 0 and res.sy < res.toplevel.titlebarHeight())) res.toplevel else null,
         else => null,
@@ -143,7 +144,7 @@ pub fn processAxis(
     const target_id = if (target) |window| window.id else 0;
     if (input.zoom_target_id != target_id) input.zoom_scroll.reset();
     input.zoom_target_id = target_id;
-    if (!input.server.world.workspaces.active and (target != null or input.isAltHeld())) {
+    if (canvas and (target != null or input.isAltHeld())) {
         if (orientation != .vertical_scroll) return;
         if (!input.canZoom()) {
             input.zoom_scroll.reset();
@@ -158,12 +159,14 @@ pub fn processAxis(
             const max_index: i32 = @intCast(@import("../camera.zig").zoom_levels.len - 1);
             const next: usize = @intCast(std.math.clamp(current + steps, 0, max_index));
             if (next == 0 or next == @as(usize, @intCast(max_index))) input.zoom_scroll.reset();
-            if (next != index or target == null) {
-                if (target) |window| {
+            if (target) |window| {
+                if (next != index) {
                     window.setZoomAnimated(next, input.cursor.x, input.cursor.y);
                 } else {
-                    input.server.world.stepZoom(steps, input.cursor.x, input.cursor.y);
+                    @import("../osd.zig").showWindowZoom(window, input.cursor.x, input.cursor.y);
                 }
+            } else {
+                input.server.world.stepZoom(steps, input.cursor.x, input.cursor.y);
             }
         }
         return;
@@ -173,7 +176,7 @@ pub fn processAxis(
     if (source == .finger and stripFinger(input, scroll_hit, orientation, delta, delta_discrete)) return;
     // Two-finger touchpad motion over empty desktop is a camera pan, matching
     // the middle-drag rubber-band/fling model. Mouse wheels stay no-ops here.
-    const desktop_finger = !input.server.world.workspaces.active and source == .finger and (scroll_hit == .none or input.finger_pan);
+    const desktop_finger = canvas and source == .finger and (scroll_hit == .none or input.finger_pan);
     if (desktop_finger and input.cursor_mode == .passthrough and input.resize_session == null) {
         if (delta == 0 and delta_discrete == 0) {
             if (input.finger_pan) {

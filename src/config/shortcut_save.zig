@@ -8,7 +8,7 @@ extern fn xkb_keysym_get_name(u32, [*]u8, usize) c_int;
 
 pub fn format(a: std.mem.Allocator, bind: keys.Keybind) ![]const u8 {
     var name: [128]u8 = undefined;
-    const n = xkb_keysym_get_name(@backingInt(bind.sym), &name, name.len);
+    const n = xkb_keysym_get_name(@intFromEnum(bind.sym), &name, name.len);
     if (n <= 0) return error.InvalidKeybind;
     return std.fmt.allocPrint(a, "{s}{s}{s}{s}{s}", .{ if (bind.modifiers.logo) "Super+" else "", if (bind.modifiers.ctrl) "Ctrl+" else "", if (bind.modifiers.alt) "Alt+" else "", if (bind.modifiers.shift) "Shift+" else "", name[0..@intCast(n)] });
 }
@@ -250,7 +250,7 @@ fn patchCustomCommand(a: std.mem.Allocator, original: []const u8, cfg: *const lo
     var patched = original;
     if (command == null) {
         const target: keys.Action = .{ .custom_command = id };
-        const modes = [_]loader.DesktopMode{ .canvas, .workspaces };
+        const modes = [_]loader.DesktopMode{ .canvas, .tiling };
         for (modes, [_][]const keys.Keybind{ cfg.keybinds, cfg.workspace_keybinds }) |mode, binds| {
             var changes: std.ArrayList(keys.Keybind) = .empty;
             for (binds) |bind| {
@@ -314,7 +314,7 @@ test "editing a command retains both mode bindings and deletion removes only its
     try std.testing.expect(std.mem.indexOf(u8, deleted, "\"Alt+F11\" = \"spawn printf hello\" # legacy") != null);
     const monitor = try keys.parseKeybind("Ctrl+Alt+Delete");
     try std.testing.expectEqual(keys.Action.noop, restarted.lookupKeybind(monitor.modifiers, monitor.sym).?);
-    restarted.compositor.desktop_mode = .workspaces;
+    restarted.compositor.desktop_mode = .tiling;
     const surviving = try keys.parseKeybind("Super+F12");
     try std.testing.expectEqual(keys.Action.close_window, restarted.lookupKeybind(surviving.modifiers, surviving.sym).?);
 }
@@ -387,14 +387,14 @@ test "assigning an unbound action preserves key spelling, comments and custom co
 }
 
 test "editing workspace defaults preserves canvas bindings and masks the previous key" {
-    inline for (.{ loader.DesktopMode.workspaces, loader.DesktopMode.scrolling }) |mode| {
+    inline for (.{ loader.DesktopMode.tiling, loader.DesktopMode.scrolling }) |mode| {
         try checkWorkspaceEdit(mode);
     }
 }
 
 test "unassign and reassign Close Window from implicit defaults in each mode" {
     const a = std.testing.allocator;
-    for ([_]loader.DesktopMode{ .canvas, .workspaces, .scrolling }) |mode| {
+    for ([_]loader.DesktopMode{ .canvas, .tiling, .scrolling }) |mode| {
         var cfg = try loader.parse(a, "", "test");
         defer cfg.deinit();
         cfg.compositor.desktop_mode = mode;

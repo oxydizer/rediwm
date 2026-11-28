@@ -66,8 +66,13 @@ def check_strip_edge(s, left, right):
         action(a)
         wait_for(lambda: ipc.get_window_debug(a)[flag], flag)
         s.settle_all()
+        # Expanding a background tile leaves focus and the view on its peer.
+        assert ipc.get_focused_window()["id"] == b and s.frame(a)[0] < seam
+        ipc.focus_window(a)
+        s.settle_all()
         x, _, w, _ = s.frame(a)
-        assert x >= seam and x + w <= seam + right["logical_width"] + 1, (flag, s.frame(a))
+        assert x == seam and w == right["logical_width"], (flag, s.frame(a))
+        wait_for(lambda: ipc.get_window_debug(a)["outputs"] == [right["name"]], "expanded tile stays on its output")
         ipc.restore(a)
         wait_for(lambda: not ipc.get_window_debug(a)[flag], "restore " + flag)
         s.settle_all()
