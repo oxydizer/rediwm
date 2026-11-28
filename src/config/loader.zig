@@ -417,6 +417,7 @@ pub const Config = struct {
     outputs: []OutputConfig = &.{},
     keybinds: []Keybind = &.{},
     workspace_keybinds: []Keybind = &.{},
+    shortcut_commands: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     workspace_lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     autostart: [][]const u8 = &.{},

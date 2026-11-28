@@ -92,7 +92,7 @@ pub fn reloadConfig(server: *Server) void {
 /// Display settings prepare this before committing so publication needs no fallible reload.
 pub fn applyLoadedConfig(server: *Server, new_cfg: loader.Config) void {
     if (server.input.open_control_center) |cc| {
-        cc.shortcuts.cancel();
+        cc.shortcuts.cancelRecording();
         cc.refresh();
     }
     var old = server.config;

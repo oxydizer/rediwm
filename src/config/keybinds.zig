@@ -104,6 +104,7 @@ pub const Action = union(enum) {
     /// Takes bindings back from a client inhibiting shortcuts; otherwise
     /// the key reaches clients.
     restore_shortcuts,
+    custom_command: []const u8,
 };
 
 /// Only these built-in device controls bypass menus and the session lock.
@@ -122,7 +123,7 @@ pub const launcher_actions = [_]Action{
 
 pub fn isBuiltIn(action: Action) bool {
     return switch (action) {
-        .noop => false,
+        .noop, .custom_command => false,
         .spawn => for (launcher_actions) |launcher| {
             if (actionEql(launcher, action)) break true;
         } else false,
@@ -186,6 +187,9 @@ pub fn parseAction(str: []const u8, allocator: Allocator) !Action {
                     if (arg.len == 0) {
                         log.warn(field_name ++ " requires " ++ argumentHelp(field_name, "an argument"), .{});
                         return error.UnknownAction;
+                    }
+                    if (comptime std.mem.eql(u8, field_name, "custom_command")) {
+                        if (!@import("shortcut_command_table.zig").validId(arg)) return error.UnknownAction;
                     }
                     break :blk @unionInit(Action, field_name, try allocator.dupe(u8, arg));
                 },
@@ -289,6 +293,7 @@ pub fn normalizeSym(sym: xkb.Keysym) xkb.Keysym {
 // Preserve the existing config diagnostics without duplicating the parser.
 const argument_help = .{
     .spawn = "a command",
+    .custom_command = "a command ID",
     .set_depth = "an integer 0-4",
     .save_layout = "a name",
     .restore_layout = "a name",
@@ -396,7 +401,7 @@ test "every action round trips and compares its payload" {
     inline for (@typeInfo(Action).@"union".field_names) |field_name| {
         const original = @unionInit(Action, field_name, switch (@FieldType(Action, field_name)) {
             void => {},
-            []const u8 => "example with spaces",
+            []const u8 => if (std.mem.eql(u8, field_name, "custom_command")) "command-1" else "example with spaces",
             u8 => 4,
             else => @compileError("add an action fixture for " ++ field_name),
         });
@@ -417,7 +422,7 @@ test "every action round trips and compares its payload" {
     try std.testing.expect(!actionEql(.close_window, .quit));
     // Depth clamping belongs to execution; parsing has always accepted all u8s.
     try std.testing.expectEqual(@as(u8, 255), (try parseAction("set_depth 255", std.testing.allocator)).set_depth);
-    inline for (.{ "set_depth 256", "set_depth -1", "set_depth nope", "Close_window" }) |invalid| {
+    inline for (.{ "set_depth 256", "set_depth -1", "set_depth nope", "Close_window", "custom_command invalid id" }) |invalid| {
         try std.testing.expectError(error.UnknownAction, parseAction(invalid, std.testing.allocator));
     }
 }

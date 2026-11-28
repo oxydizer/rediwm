@@ -2,7 +2,8 @@
 pub const source =
     \\# ~/.config/rediwm/config.toml
     \\# Line-based TOML subset: one assignment/array per line, double-quoted strings.
-    \\# No escape decoding, literal/multiline strings, inline tables or dotted keys.
+    \\# Escape decoding applies to shortcut commands. No literal/multiline
+    \\# strings, inline tables or dotted keys.
     \\# See README.md, Configuration, for the supported syntax.
     \\
     \\# ───────────────────────────────────────────────
@@ -385,6 +386,16 @@ pub const source =
     \\# Format: "modifiers+key" = "action [args]"
     \\# Modifiers: super/mod, ctrl, alt, shift
     \\# ───────────────────────────────────────────────
+    \\# Managed shortcuts can persist without a key in [shortcut_commands].
+    \\# [shortcut_commands]
+    \\# editor = "rediwm-editor \"Notes for today.txt\""
+    \\# In [keybinds] or [keybinds.workspace], assign "custom_command editor".
+    \\# Whitespace separates arguments outside quotes. A backslash escapes the
+    \\# next character outside single quotes. An unquoted leading ~ or ~/ uses
+    \\# HOME when set. $NAME and ${NAME} expand outside single quotes, without
+    \\# splitting the result. Unset variables expand to empty.
+    \\# These commands run directly. Use sh -c to request shell syntax.
+    \\# Legacy spawn bindings continue to use shell command lines.
     \\[keybinds]
     \\# Laptop controls (also available while menus or the lock screen are open)
     \\"XF86AudioRaiseVolume" = "volume_up"

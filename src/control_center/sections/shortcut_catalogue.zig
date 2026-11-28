@@ -13,7 +13,7 @@ fn applicable(action: keys.Action, mode: config.loader.DesktopMode) bool {
 
 /// Action tags provide a stable order. Numeric preset slots and configured
 /// payloads are ordered by identity within each tag.
-pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []const keys.Keybind) ![]keys.Action {
+pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []const keys.Keybind, command_ids: []const []const u8) ![]keys.Action {
     var result: std.ArrayList(keys.Action) = .empty;
     inline for (@typeInfo(keys.Action).@"union".field_names) |name| {
         if (comptime @FieldType(keys.Action, name) == void and !std.mem.eql(u8, name, "noop")) {
@@ -30,6 +30,7 @@ pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []c
     } else {
         for (0..5) |n| try result.append(a, .{ .set_depth = @intCast(n) });
     }
+    for (command_ids) |id| try result.append(a, .{ .custom_command = id });
     for (binds) |bind| {
         if (bind.action == .noop) continue;
         for (result.items) |action| {
@@ -49,6 +50,7 @@ fn lessThan(_: void, a: keys.Action, b: keys.Action) bool {
         .move_to_workspace => |n| n < b.move_to_workspace,
         .set_depth => |n| n < b.set_depth,
         .spawn => |s| std.mem.lessThan(u8, s, b.spawn),
+        .custom_command => |s| std.mem.lessThan(u8, s, b.custom_command),
         .save_layout => |s| std.mem.lessThan(u8, s, b.save_layout),
         .restore_layout => |s| std.mem.lessThan(u8, s, b.restore_layout),
         else => false,
@@ -93,9 +95,9 @@ test "catalogue order and action identities survive binding removal and reorder"
         .{ .sym = f, .action = .toggle_fullscreen },
         .{ .sym = f4, .action = .close_window },
     };
-    const empty = try actions(a, .canvas, &.{});
-    const joined = try actions(a, .canvas, configured);
-    const reordered = try actions(a, .canvas, configured[1..]);
+    const empty = try actions(a, .canvas, &.{}, &.{});
+    const joined = try actions(a, .canvas, configured, &.{});
+    const reordered = try actions(a, .canvas, configured[1..], &.{});
     try std.testing.expectEqual(empty.len, joined.len);
     for (empty, joined, reordered) |x, y, z| {
         try std.testing.expect(keys.actionEql(x, y) and keys.actionEql(x, z));
@@ -117,6 +119,7 @@ pub fn group(action: keys.Action) usize {
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down, .power_profile_cycle => 4,
         .workspace, .move_to_workspace, .workspace_next, .workspace_prev => 6,
         .spawn => if (keys.isBuiltIn(action)) 2 else 7,
+        .custom_command => 7,
         .noop => 8,
         else => 5,
     };
@@ -188,6 +191,7 @@ pub fn description(action: keys.Action, buf: []u8) []const u8 {
         .@"suspend", .suspend_auto => i18n.tr("Put the computer to sleep."),
         .restart_shell => i18n.tr("Restart the desktop shell."),
         .spawn => |cmd| cmd,
+        .custom_command => i18n.tr("Command is missing."),
         .toggle_start_menu => i18n.tr("Open or close the application launcher."),
         .close_window => i18n.tr("Close the focused window."),
         .screenshot_region => i18n.tr("Capture a region of your screen."),
@@ -236,6 +240,7 @@ pub fn title(action: keys.Action, buf: []u8) []const u8 {
             i18n.tr("Open Firefox")
         else
             i18n.tr("Spawn"),
+        .custom_command => i18n.tr("Custom Command"),
         .close_window => i18n.tr("Close Window"),
         .toggle_fullscreen => i18n.tr("Toggle Fullscreen"),
         .toggle_maximize => i18n.tr("Toggle Maximize"),
@@ -279,4 +284,20 @@ pub fn title(action: keys.Action, buf: []u8) []const u8 {
         .undo => i18n.tr("Undo"),
         .restore_shortcuts => i18n.tr("Restore Shortcuts"),
     };
+}
+
+test "custom command rows remain visible without a binding and are deduplicated" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const chord = try keys.parseKeybind("Super+F12");
+    const binds = [_]keys.Keybind{.{ .modifiers = chord.modifiers, .sym = chord.sym, .action = .{ .custom_command = "z" } }};
+    const list = try actions(a, .canvas, &binds, &.{ "z", "a" });
+    var ids: std.ArrayList([]const u8) = .empty;
+    for (list) |action| if (action == .custom_command) {
+        try ids.append(a, action.custom_command);
+    };
+    try std.testing.expectEqual(@as(usize, 2), ids.items.len);
+    try std.testing.expectEqualStrings("a", ids.items[0]);
+    try std.testing.expectEqualStrings("z", ids.items[1]);
 }

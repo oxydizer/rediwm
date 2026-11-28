@@ -299,7 +299,7 @@ pub fn setActivated(cc: *ControlCenter, activated: bool) void {
     if (cc.focused == activated) return;
     cc.focused = activated;
     if (!activated) {
-        cc.shortcuts.cancel();
+        cc.shortcuts.cancelRecording();
         cc.requestWidgetRepaint();
     }
 }

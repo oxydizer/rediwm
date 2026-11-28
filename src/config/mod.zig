@@ -18,6 +18,7 @@ pub const sandbox_allow = @import("sandbox_allow.zig");
 pub const schedule = @import("schedule.zig");
 pub const setting_save = @import("setting_save.zig");
 pub const shortcut_save = @import("shortcut_save.zig");
+pub const shortcut_command = @import("shortcut_command.zig");
 pub const taskbar_items = @import("taskbar_items.zig");
 pub const theme_pack = @import("theme_pack.zig");
 pub const terminal_theme = @import("terminal_theme.zig");

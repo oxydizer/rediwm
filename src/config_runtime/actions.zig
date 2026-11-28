@@ -38,6 +38,15 @@ pub fn executeAction(server: *Server, action: Action) void {
         .input_source_next => if (server.input_sources) |sources| sources.cycle(true),
         .input_source_prev => if (server.input_sources) |sources| sources.cycle(false),
         .spawn => |cmd| launchPreferred(server, cmd),
+        .custom_command => |id| if (server.config.shortcut_commands.get(id)) |command| {
+            var arena = std.heap.ArenaAllocator.init(gpa);
+            defer arena.deinit();
+            const args = customCommandArgs(server, arena.allocator(), command) catch |err| {
+                log.warn("invalid custom shortcut command '{s}': {}", .{ id, err });
+                return;
+            };
+            spawnArgv(server, args);
+        },
         .close_window => if (focusedToplevel(server)) |t| t.sendClose(),
         .toggle_fullscreen => if (focusedToplevel(server)) |t| t.toggleFullscreen(),
         .toggle_maximize => if (focusedToplevel(server)) |t| t.toggleMaximize(),
@@ -167,6 +176,13 @@ pub fn spawnProcess(server: *Server, cmd: []const u8) void {
 /// Runs `argv` directly, no shell, as `spawnProcess` would a command line.
 pub fn spawnArgv(server: *Server, argv: []const []const u8) void {
     _ = spawnTracked(server, argv[0], false, argv);
+}
+
+pub fn customCommandArgs(server: *Server, a: std.mem.Allocator, command: []const u8) ![]const []const u8 {
+    var env = try server.environ.createMap(a);
+    defer env.deinit();
+    try server.applyChildEnv(&env);
+    return @import("config").shortcut_command.parse(a, command, &env);
 }
 
 pub fn spawnHelper(server: *Server, cmd: []const u8) void {

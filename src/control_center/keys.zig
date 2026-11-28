@@ -107,6 +107,10 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
     }
     if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power or cc.page == .keys or cc.page == .shortcuts) {
         const focused = dispatcher.focused;
+        if (cc.page == .shortcuts and key == .escape and cc.shortcuts.cancelCommand()) {
+            cc.refresh();
+            return true;
+        }
         if (cc.page == .keys and key == .escape and cc.key_settings.form != .none) {
             @import("sections/keys.zig").cancel(cc, 0);
             return true;

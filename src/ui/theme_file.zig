@@ -107,10 +107,25 @@ pub fn stripComment(line: []const u8) []const u8 {
     var i: usize = 0;
     while (i < line.len) : (i += 1) {
         const ch = line[i];
-        if (ch == '"' and (i == 0 or line[i - 1] != '\\')) in_string = !in_string;
+        if (in_string and ch == '\\' and i + 1 < line.len) {
+            i += 1;
+            continue;
+        }
+        if (ch == '"') in_string = !in_string;
         if (ch == '#' and !in_string) return std.mem.trimEnd(u8, line[0..i], " \t");
     }
     return line;
+}
+
+test "stripComment observes escaped quotes and backslashes" {
+    try std.testing.expectEqualStrings(
+        "path = \"some\\\\\"",
+        stripComment("path = \"some\\\\\" # outside"),
+    );
+    try std.testing.expectEqualStrings(
+        "command = \"echo \\\"# inside\\\"\"",
+        stripComment("command = \"echo \\\"# inside\\\"\" # outside"),
+    );
 }
 
 pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []const u8) !void {

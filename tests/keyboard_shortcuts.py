@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import tomllib
 
 from ipc_client import IPCClient, spawn_compositor, stop_process
 
@@ -18,7 +19,15 @@ def run():
             original += '"Super+c" = "noop"\n'
         custom = '"Alt+F11" = "spawn printf hello" # keep custom command'
         original += custom + "\n"
-        process, log = spawn_compositor(tmp, config_content=original, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+        env = {"DBUS_SESSION_BUS_ADDRESS": "", "HOME": str(tmp), "REDIWM_SHORTCUT_TEST": "two words"}
+        config_path = tmp / "rediwm-config.toml"
+        output_path = tmp / "shortcut-result"
+        managed = (
+            """python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text("|".join(sys.argv[2:]))' """
+            """~/shortcut-result "quoted value" "$REDIWM_SHORTCUT_TEST" ;"""
+        )
+        shell_command = """sh -c 'printf "%s" "$1" > "$2"' sh "shell result" ~/shortcut-result"""
+        process, log = spawn_compositor(tmp, config_content=original, env_extra=env)
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.action('open_control_center')
@@ -48,6 +57,28 @@ def run():
                     ipc.key(125, True)
                     ipc.key_press(key)
                     ipc.key(125, False)
+
+                def find_shortcut(query):
+                    if has("Clear shortcut search"):
+                        click("Clear shortcut search")
+                    click("shortcut_search")
+                    ipc.type_text(query)
+                    time.sleep(.15)
+
+                def commands():
+                    return tomllib.loads(config_path.read_text()).get("shortcut_commands", {})
+
+                def mode_bindings():
+                    bindings = tomllib.loads(config_path.read_text())["keybinds"]
+                    return bindings["workspace"] if workspace_mode else bindings
+
+                def expect_command_output(expected):
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if output_path.exists() and output_path.read_text() == expected:
+                            return
+                        time.sleep(.05)
+                    raise AssertionError(f"custom shortcut did not write {expected!r}")
 
                 click("Keyboard Shortcuts")
                 assert has("Window Management") and has("Launcher")
@@ -185,7 +216,7 @@ def run():
                 assert ipc.get_shell_state()["control_center"] is not None
             stop_process(process)
             log.close()
-            process, log = spawn_compositor(tmp, config_content=saved, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+            process, log = spawn_compositor(tmp, config_content=saved, env_extra=env)
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.action("open_control_center")
                 time.sleep(.3)
@@ -217,7 +248,79 @@ def run():
                 click("Reset built-in shortcuts")
                 assert has("Super+f") and not has("Super+F12")
                 assert custom in (tmp / "rediwm-config.toml").read_text()
-            print("PASS: shortcut recording, multiple bindings, restart and reset")
+
+                find_shortcut("printf hello")
+                click("Add Custom Command")
+                before_command = config_path.read_text()
+                click("Save command")
+                assert has("Enter an executable and check the command’s quoting and expansions.")
+                assert config_path.read_text() == before_command
+                click("shortcut_command")
+                ipc.type_text(managed)
+                blocked = tmp / "rediwm-config.toml.shortcuts.tmp"
+                blocked.write_text("occupied")
+                click("Save command")
+                assert has("Could not save. Check the configuration file and try again.")
+                assert config_path.read_text() == before_command
+                blocked.unlink()
+                click("Save command")
+                assert list(commands().values()) == [managed]
+                command_id = next(iter(commands()))
+                action = f"custom_command {command_id}"
+
+                find_shortcut("python3")
+                assert has(managed)
+                click("Not assigned", beside=managed)
+                chord("f")
+                time.sleep(.15)
+                assert has("Shortcut already in use. Try another.")
+                chord("F12")
+                time.sleep(.15)
+                click("Save shortcut")
+                assert mode_bindings()["Super+F12"] == action
+                chord("F12")
+                expect_command_output("quoted value|two words|;")
+
+                click("Edit command", beside=managed)
+                click("shortcut_command")
+                ipc.key(29, True)
+                ipc.key_press("a")
+                ipc.key(29, False)
+                ipc.type_text(shell_command)
+                click("Save command")
+                assert commands() == {command_id: shell_command}
+                assert mode_bindings()["Super+F12"] == action
+                chord("F12")
+                expect_command_output("shell result")
+
+                find_shortcut("shell result")
+                click("Unassign shortcut", beside="Super+F12")
+                assert has(shell_command) and has("Not assigned")
+                assert action not in mode_bindings().values()
+                saved = config_path.read_text()
+            stop_process(process)
+            log.close()
+            process, log = spawn_compositor(tmp, config_content=saved, env_extra=env)
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.action("open_control_center")
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                find_shortcut("shell result")
+                assert commands() == {command_id: shell_command}
+                assert has(shell_command) and has("Not assigned")
+                click("Not assigned", beside=shell_command)
+                chord("F12")
+                time.sleep(.15)
+                click("Save shortcut")
+                assert mode_bindings()["Super+F12"] == action
+                click("Edit command", beside=shell_command)
+                click("Delete command…")
+                click("Delete command and its shortcuts")
+                assert not commands()
+                assert action not in mode_bindings().values()
+                assert not has(shell_command)
+                assert custom in config_path.read_text()
+            print("PASS: shortcut recording, reset, and custom command lifecycle")
         finally:
             stop_process(process)
             log.close()

@@ -3,6 +3,7 @@
 const std = @import("std");
 const loader = @import("loader.zig");
 const keys = @import("keybinds.zig");
+const command_table = @import("shortcut_command_table.zig");
 extern fn xkb_keysym_get_name(u32, [*]u8, usize) c_int;
 
 pub fn format(a: std.mem.Allocator, bind: keys.Keybind) ![]const u8 {
@@ -101,6 +102,7 @@ fn writeBinding(a: std.mem.Allocator, writer: *std.Io.Writer, bind: keys.Keybind
     defer a.free(key);
     const action_buf = try a.alloc(u8, switch (bind.action) {
         .spawn => |v| v.len + 32,
+        .custom_command => |v| v.len + 32,
         .save_layout => |v| v.len + 32,
         .restore_layout => |v| v.len + 32,
         else => 128,
@@ -194,12 +196,64 @@ fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []cons
     var old = try loader.parse(a, original, path);
     defer old.deinit();
     old.compositor.desktop_mode = mode;
-    if (old.activeKeybinds().len != binds.len) return error.ConfigChanged;
-    for (old.activeKeybinds(), binds) |x, y| {
-        if (chord(x) != chord(y) or !keys.actionEql(x.action, y.action)) return error.ConfigChanged;
+    if (!sameBindings(old.activeKeybinds(), binds)) return error.ConfigChanged;
+    for (changes) |bind| {
+        if (bind.action == .custom_command and !old.shortcut_commands.contains(bind.action.custom_command)) return error.ConfigChanged;
     }
     const result = try patchBindings(a, original, binds, changes, mode);
     defer a.free(result);
+    try writeConfig(a, io, path, result);
+}
+
+pub fn saveCustomCommand(a: std.mem.Allocator, io: std.Io, cfg: *const loader.Config, id: []const u8, command: ?[]const u8) !void {
+    const path = cfg.path;
+    if (path.len == 0) return error.NoConfigPath;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const original = try std.Io.Dir.cwd().readFileAlloc(io, path, scratch, .limited(1 << 20));
+    var old = try loader.parse(a, original, path);
+    defer old.deinit();
+    const actual = old.shortcut_commands.get(id);
+    const expected = cfg.shortcut_commands.get(id);
+    if ((actual == null) != (expected == null) or
+        (actual != null and !std.mem.eql(u8, actual.?, expected.?))) return error.ConfigChanged;
+    if (command == null and (!sameBindings(old.keybinds, cfg.keybinds) or
+        !sameBindings(old.workspace_keybinds, cfg.workspace_keybinds))) return error.ConfigChanged;
+
+    const result = try patchCustomCommand(scratch, original, &old, id, command);
+    try writeConfig(a, io, path, result);
+}
+
+fn sameBindings(a: []const keys.Keybind, b: []const keys.Keybind) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (chord(x) != chord(y) or !keys.actionEql(x.action, y.action)) return false;
+    }
+    return true;
+}
+
+fn patchCustomCommand(a: std.mem.Allocator, original: []const u8, cfg: *const loader.Config, id: []const u8, command: ?[]const u8) ![]u8 {
+    var patched = original;
+    if (command == null) {
+        const target: keys.Action = .{ .custom_command = id };
+        const modes = [_]loader.DesktopMode{ .canvas, .workspaces };
+        for (modes, [_][]const keys.Keybind{ cfg.keybinds, cfg.workspace_keybinds }) |mode, binds| {
+            var changes: std.ArrayList(keys.Keybind) = .empty;
+            for (binds) |bind| {
+                if (!keys.actionEql(bind.action, target) or find(changes.items, bind) != null) continue;
+                var winner = find(binds, bind).?;
+                if (keys.actionEql(winner.action, target)) winner.action = .noop;
+                try changes.append(a, winner);
+            }
+            if (changes.items.len != 0) patched = try patchBindings(a, patched, binds, changes.items, mode);
+        }
+    }
+    return command_table.patch(a, patched, id, command);
+}
+
+fn writeConfig(a: std.mem.Allocator, io: std.Io, path: []const u8, result: []const u8) !void {
+    if (result.len > 1 << 20) return error.ConfigTooLarge;
     var checked = try loader.parse(a, result, path);
     defer checked.deinit();
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
@@ -211,6 +265,45 @@ fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []cons
     try file.writeStreamingAll(io, result);
     try file.sync(io);
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
+}
+
+test "editing a command retains both mode bindings and deletion removes only its references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Ctrl+Alt+Delete" = "custom_command demo"
+        \\"Alt+F11" = "spawn printf hello" # legacy
+        \\[keybinds.workspace]
+        \\"Super+F11" = "custom_command demo"
+        \\"Super+F12" = "custom_command demo"
+        \\"super+f12" = "close_window"
+        \\[shortcut_commands]
+        \\demo = "echo hi"
+        \\
+    ;
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    const updated = try patchCustomCommand(a, original, &cfg, "demo", "echo \"new value\"");
+    var edited = try loader.parse(a, updated, "test");
+    defer edited.deinit();
+    try std.testing.expectEqualStrings("echo \"new value\"", edited.shortcut_commands.get("demo").?);
+    try std.testing.expect(sameBindings(cfg.keybinds, edited.keybinds));
+    try std.testing.expect(sameBindings(cfg.workspace_keybinds, edited.workspace_keybinds));
+
+    const deleted = try patchCustomCommand(a, updated, &edited, "demo", null);
+    var restarted = try loader.parse(a, deleted, "test");
+    defer restarted.deinit();
+    try std.testing.expect(!restarted.shortcut_commands.contains("demo"));
+    try std.testing.expect(std.mem.indexOf(u8, deleted, "custom_command demo") == null);
+    try std.testing.expect(std.mem.indexOf(u8, deleted, "\"Alt+F11\" = \"spawn printf hello\" # legacy") != null);
+    const monitor = try keys.parseKeybind("Ctrl+Alt+Delete");
+    try std.testing.expectEqual(keys.Action.noop, restarted.lookupKeybind(monitor.modifiers, monitor.sym).?);
+    restarted.compositor.desktop_mode = .workspaces;
+    const surviving = try keys.parseKeybind("Super+F12");
+    try std.testing.expectEqual(keys.Action.close_window, restarted.lookupKeybind(surviving.modifiers, surviving.sym).?);
 }
 
 test "moving inherited shortcuts persists and old keys can be reused" {

@@ -163,6 +163,13 @@ const ParseState = struct {
                 fail(path, line_no, "invalid night_light field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
+            .shortcut_commands => {
+                const table = @import("shortcut_command_table.zig");
+                if (!table.validId(key) or cfg.shortcut_commands.contains(key)) return error.InvalidConfig;
+                const a = cfg.arena.allocator();
+                const command = std.json.parseFromSliceLeaky([]const u8, a, value, .{ .allocate = .alloc_always }) catch return error.InvalidConfig;
+                try cfg.shortcut_commands.put(a, try a.dupe(u8, key), command);
+            },
             .keybinds, .workspace_keybinds => {
                 const spec = keybinds.parseKeybind(key) catch {
                     fail(path, line_no, "invalid keybind '{s}'", .{key});
@@ -368,6 +375,7 @@ pub const Section = union(enum) {
     outputs,
     keybinds,
     workspace_keybinds,
+    shortcut_commands,
     polkit,
     idle,
     power,
@@ -450,7 +458,7 @@ pub fn parseSection(line: []const u8) !Section {
     if (std.mem.eql(u8, name, "power.on_battery")) return .power_battery;
     if (std.mem.eql(u8, name, "power.plugged_in")) return .power_plugged;
     // Array tables and internal tags are deliberately not accepted here.
-    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
+    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .shortcut_commands, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
     if (std.mem.eql(u8, name, "effects.window_move")) return .{ .effect_binding = .window_move };
