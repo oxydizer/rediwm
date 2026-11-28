@@ -7,6 +7,7 @@ const DesktopMode = config_mod.loader.DesktopMode;
 const catalogue = @import("shortcut_catalogue.zig");
 const Filter = @import("shortcut_filter.zig").Filter;
 const saving = @import("config").shortcut_save;
+const slots = config_mod.shortcut_slots;
 const panel = @import("../panel.zig");
 const ui = @import("ui");
 const W = ui.layout.Widget;
@@ -19,6 +20,8 @@ const icons = [_]ui.layout.IconId{ .display, .grid, .grid, .document, .volume, .
 const Target = struct {
     action: keys.Action,
     chord: ?u64 = null,
+    slot: ?slots.Slot = null,
+    assigned: ?slots.Slots = null,
     mode: DesktopMode,
     command: ?[]const u8 = null,
 
@@ -47,6 +50,22 @@ const Target = struct {
         if (target.commandSnapshot()) |command| {
             if (!command.matches(cfg)) return error.ConfigChanged;
         }
+        if (target.slot) |slot| {
+            var factory = saving.factoryConfig(gpa, target.mode) catch
+                return error.ConfigChanged;
+            defer factory.deinit();
+            const current = slots.resolve(
+                cfg.activeKeybinds(),
+                factory.activeKeybinds(),
+                target.action,
+                cfg.storedShortcutSlots(target.action),
+            );
+            const expected = target.assigned orelse
+                return error.ConfigChanged;
+            if (!current.eql(expected) or
+                current.get(slot) != target.chord)
+                return error.ConfigChanged;
+        }
         const chord = target.chord orelse return null;
         const binds = cfg.activeKeybinds();
         var i = binds.len;
@@ -62,6 +81,11 @@ const Target = struct {
 
     fn eql(x: Target, y: Target) bool {
         if (x.mode != y.mode or x.chord != y.chord or !keys.actionEql(x.action, y.action)) return false;
+        if (x.slot != y.slot) return false;
+        if ((x.assigned == null) != (y.assigned == null)) return false;
+        if (x.assigned) |assigned| {
+            if (!assigned.eql(y.assigned.?)) return false;
+        }
         return if (x.command) |body| y.command != null and std.mem.eql(u8, body, y.command.?) else y.command == null;
     }
 };
@@ -202,6 +226,19 @@ pub const Section = struct {
             .record => record: {
                 const target = s.editing orelse return;
                 const index = target.resolve(config) catch |err| break :record err;
+                if (target.slot) |slot| {
+                    const candidate = s.candidate orelse return;
+                    break :record saving.saveSlot(
+                        gpa,
+                        cc.server.io,
+                        config,
+                        target.mode,
+                        target.action,
+                        slot,
+                        if (candidate.action == .noop) null else candidate,
+                        target.commandSnapshot(),
+                    );
+                }
                 break :record saving.saveMode(gpa, cc.server.io, config.path, config.activeKeybinds(), index, s.candidate orelse return, target.mode, target.commandSnapshot());
             },
             .reset => |target| reset: {
@@ -304,7 +341,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     const searching = filter.query.len > 0;
     s.groups[0] = .{ .kind = .container, .direction = .column, .gap = 8, .children = try children(a, &.{
         search,
-        try resetBar(s, cc, a, saving.canReset(effective, defaults, null)),
+        try resetBar(s, cc, a, saving.canReset(effective, defaults, null) or saving.canResetSlots(&cc.server.config, null)),
     }) };
     s.group_count = 1;
     for (names, 0..) |name, g| {
@@ -338,6 +375,28 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             } else false;
             if (!matches) continue;
             const target = try (Target{ .action = action, .mode = mode, .command = command }).copy(a);
+            if (keys.isBuiltIn(action)) {
+                const assigned = slots.resolve(
+                    binds,
+                    defaults,
+                    action,
+                    cc.server.config.storedShortcutSlots(action),
+                );
+                try appendSlotRow(
+                    s, cc, a, &rows, title, description, target,
+                    assigned,
+                    saving.canReset(effective, defaults, action) or
+                        saving.canResetSlots(&cc.server.config, action),
+                );
+                for (effective, labels) |bind, label| {
+                    if (!slots.isOverflow(binds, action, assigned, slots.chord(bind))) continue;
+                    try appendRow(
+                        s, cc, a, &rows, "", i18n.tr("Additional shortcut"),
+                        target, bind, label, false, false,
+                    );
+                }
+                continue;
+            }
             if (s.command_editor) |*editor| {
                 if (editor.id != null and action == .custom_command and std.mem.eql(u8, editor.id.?, action.custom_command))
                     try rows.append(a, try commandForm(s, cc, a, editor));
@@ -421,6 +480,137 @@ fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled
     }
     if (s.editing == null and s.command_editor == null and s.message.len != 0) try widgets.append(a, text(s.message, true));
     return .{ .kind = .container, .direction = .column, .@"align" = .start, .gap = 8, .children = widgets.items };
+}
+
+fn appendSlotRow(
+    s: *Section,
+    cc: *panel.ControlCenter,
+    a: std.mem.Allocator,
+    rows: *std.ArrayList(W),
+    title: []const u8,
+    description: []const u8,
+    action_target: Target,
+    assigned: slots.Slots,
+    reset: bool,
+) !void {
+    const t = panel.palette();
+    const binds = cc.server.config.activeKeybinds();
+    var controls: std.ArrayList(W) = .empty;
+    var recorder: ?usize = null;
+
+    try controls.append(a, .{
+        .kind = .container,
+        .direction = .column,
+        .width = .{ .flex = 1 },
+        .gap = 3,
+        .children = try children(a, &.{
+            text(title, false),
+            text(description, true),
+        }),
+    });
+
+    for ([_]slots.Slot{ .primary, .alternate }) |slot| {
+        var target = action_target;
+        target.slot = slot;
+        target.assigned = assigned;
+        target.chord = assigned.get(slot);
+        const id = s.targets.items.len;
+        try s.targets.append(a, target);
+
+        const editing = if (s.editing) |active|
+            active.eql(target)
+        else
+            false;
+        const label = if (target.chord) |value|
+            if (slots.lookup(binds, value)) |bind|
+                saving.format(a, bind) catch i18n.tr("Unknown key")
+            else
+                i18n.tr("Not assigned")
+        else
+            i18n.tr("Not assigned");
+
+        var chip = button(cc, id, label, null, edit);
+        chip.name = switch (slot) {
+            .primary => "shortcut_primary",
+            .alternate => "shortcut_alternate",
+        };
+        chip.width = .{ .fixed = if (cc.panel_box.width < 660) 112 else 156 };
+        if (editing) {
+            chip.kind.button.variant = .primary;
+            recorder = id;
+        }
+        try controls.append(a, chip);
+    }
+
+    const reset_id = s.targets.items.len;
+    try s.targets.append(a, action_target);
+    var restore = button(
+        cc, reset_id, i18n.tr("Restore factory bindings"),
+        .refresh, resetClicked,
+    );
+    restore.name = "reset_shortcut";
+    if (!reset) restore.kind.button.state = .disabled;
+    try controls.append(a, restore);
+
+    try rows.append(a, .{
+        .kind = .{ .rect = .{ .color = t.window_divider } },
+        .height = .{ .fixed = 1 },
+        .width = .{ .percent = 1 },
+    });
+    try rows.append(a, .{
+        .kind = .container,
+        .direction = .row,
+        .height = .{ .fixed = 60 },
+        .width = .{ .percent = 1 },
+        .padding = ui.layout.Edges.xy(12, 0),
+        .gap = 8,
+        .@"align" = .center,
+        .children = controls.items,
+    });
+
+    if (recorder) |id| {
+        const prompt = if (s.message.len != 0)
+            s.message
+        else if (s.candidate) |candidate|
+            saving.format(a, candidate) catch i18n.tr("Unknown key")
+        else
+            i18n.tr("Press keys to record. Esc cancels.");
+
+        var confirm = button(
+            cc, id, i18n.tr("Save shortcut"), .checkmark, confirmClicked,
+        );
+        confirm.name = "save";
+        confirm.kind.button.variant = .primary;
+        if (s.candidate == null)
+            confirm.kind.button.state = .disabled;
+
+        var clear = button(
+            cc, id, i18n.tr("Clear shortcut"), null, disableClicked,
+        );
+        clear.name = "unassign";
+        if (s.targets.items[id].chord == null)
+            clear.kind.button.state = .disabled;
+
+        var cancel_btn = button(
+            cc, id, i18n.tr("Cancel"), .close, cancelClicked,
+        );
+        cancel_btn.name = "cancel";
+
+        var caption = text(prompt, true);
+        caption.width = .{ .flex = 1 };
+        try rows.append(a, .{
+            .kind = .container,
+            .direction = .row,
+            .height = .{ .fixed = 44 },
+            .width = .{ .percent = 1 },
+            .padding = ui.layout.Edges.xy(12, 0),
+            .gap = 8,
+            .@"align" = .center,
+            .children = try children(a, &.{
+                caption, clear, confirm, cancel_btn,
+            }),
+        });
+    }
 }
 
 fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, action_target: Target, bind: ?keys.Keybind, label: []const u8, add: bool, reset: bool) !void {
