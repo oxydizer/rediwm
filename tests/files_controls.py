@@ -528,10 +528,12 @@ def run():
 
                 def pane_width_is(width):
                     image = sidebar_shot()
-                    background = image.getpixel((5, 120))
-                    return (image.getpixel((width - 20, 120)) == background and
-                            image.getpixel((width - 1, 120)) != background and
-                            image.getpixel((width + 2, 120)) != background)
+                    # The shared splitter paints one pixel when idle and
+                    # two when engaged, immediately left of the boundary.
+                    left = image.getpixel((width - 3, 120))
+                    divider = image.getpixel((width - 1, 120))
+                    right = image.getpixel((width, 120))
+                    return divider != left and divider != right
 
                 def drag_divider(start, end):
                     box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
