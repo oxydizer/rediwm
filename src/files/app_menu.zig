@@ -259,10 +259,12 @@ pub fn fileActions(self: *App) []const FileAction {
     const actions = baseFileActions(self);
     const group = @import("app_folder_selection.zig").eligible(self);
     const paste = if (pasteFolder(self) != null) std.mem.indexOfScalar(FileAction, actions, .paste) else null;
-    if (!group and paste == null) return actions;
+    const run_first = self.menu == .file and self.menu_run_first and actions.len != 0 and actions[0] == .open;
+    if (!group and paste == null and !run_first) return actions;
     const offset: usize = @intFromBool(group);
     if (group) self.file_menu_actions[0] = .new_folder_from_selection;
     @memcpy(self.file_menu_actions[offset .. actions.len + offset], actions);
+    if (run_first) self.file_menu_actions[offset] = .run;
     if (paste) |index| self.file_menu_actions[index + offset] = .paste_into_folder;
     return self.file_menu_actions[0 .. actions.len + offset];
 }
@@ -379,6 +381,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
 
 pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
     if (kind == .file and self.fileActions().len == 0) return;
+    self.menu_run_first = kind == .file and self.selectedExecutable() != null;
     self.menu = kind;
     if (kind == .file) self.refreshTrashRestorable();
     const height = self.menuHeight();
@@ -494,6 +497,7 @@ pub fn runMenu(self: *App, row: usize) void {
         },
         .file => if (file_action) |action| switch (action) {
             .open => self.activateSelected(),
+            .run => self.runSelected(),
             .open_with => self.openWithDialog(),
             .add_application => self.addApplication(),
             .extract => if (self.selectedArchive()) |path| self.startExtraction(path, std.fs.path.dirname(path) orelse "/"),

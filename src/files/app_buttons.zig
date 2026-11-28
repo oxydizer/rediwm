@@ -421,13 +421,15 @@ fn contentPress(self: *App, button: u32, x: f64, y: f64, now: i64) void {
             }
         }
 
-        const single_click = self.single_click_open and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickItemAt(x, y) == idx;
+        // Running an AppImage requires the second click even in single-click mode.
+        const single_click = self.single_click_open and button == 0x110 and !self.ctrl and !self.shift and !self.alt and
+            self.singleClickItemAt(x, y) == idx and !self.canRunAppImage(self.items.items[idx]);
         // A single click opens on release, so a double-click would open
         // the item twice: the second click only selects.
         const just_opened = single_click and self.last_open_index == idx and now - self.last_open_time < 400;
         // Icon clicks activate on release so they can still start a drag.
         if (!single_click and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.last_click_index == idx and (now - self.last_click_time < 400)) {
-            self.activateItem(idx);
+            self.activateDoubleClick(idx);
             self.last_click_index = null;
             self.last_click_time = 0;
             return;

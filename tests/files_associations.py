@@ -99,6 +99,18 @@ def check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimag
     time.sleep(.5)
     assert len(registered()) == 1 and entry.read_text() == text, 'repeated Add duplicated the launcher'
     assert not appimage_marker.exists()
+    click(260, 130, 273)
+    key(28)  # The initial context action is Run after registration grants +x.
+    wait_for(appimage_marker.exists, 'default context action did not run the AppImage')
+    assert appimage_marker.read_text() == ''
+    appimage_marker.unlink()
+    click(260, 130)
+    time.sleep(.1)
+    assert not appimage_marker.exists(), 'single click ran the executable AppImage'
+    click(260, 130)
+    wait_for(appimage_marker.exists, 'double-click did not run the executable AppImage')
+    assert appimage_marker.read_text() == ''
+    appimage_marker.unlink()
     # The start menu's live catalogue and its own Exec parser must see the
     # new launcher too, including the same punctuation-heavy image path.
     def launch_from_catalogue():
@@ -113,6 +125,41 @@ def check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimag
     wait_for(appimage_marker.exists, 'the start menu launcher did not run the AppImage')
     assert appimage_marker.read_text() == '--fixture\n'
     appimage_marker.unlink()
+
+    scripts = portable.parent / 'scripts'
+    scripts.mkdir()
+    script = scripts / 'script with spaces.sh'
+    script.write_text('#!/bin/sh\npwd > script-ran\n')
+    script.chmod(0o600)
+    ran = scripts / 'script-ran'
+    opened = portable.parent / 'opened'
+    opened.unlink(missing_ok=True)
+    ipc.action('key', {'keycode': 29, 'pressed': True})
+    key(38)  # Ctrl+L
+    ipc.action('key', {'keycode': 29, 'pressed': False})
+    ipc.type_text(str(scripts))
+    key(28)
+    wait_for(lambda: any(w['title'] == 'scripts — RediWM Files' for w in ipc.get_windows()),
+             'script folder did not open')
+    time.sleep(.3)
+    click(260, 130, 273)
+    key(28)
+    wait_for(lambda: opened.exists() and opened.read_text() == 'openscad\n' + str(script),
+             'non-executable script did not open with its MIME default')
+    assert not ran.exists()
+    script.chmod(0o700)
+    key(63)  # F5
+    time.sleep(.3)
+    opened.unlink()
+    click(260, 130)
+    click(260, 130)
+    wait_for(lambda: opened.exists() and opened.read_text() == 'openscad\n' + str(script),
+             'double-click did not open the executable shell script with its MIME default')
+    assert not ran.exists()
+    click(260, 130, 273)
+    key(28)
+    wait_for(lambda: ran.exists() and ran.read_text().strip() == str(scripts),
+             'default context action did not run the script in its directory')
 
 
 def run():
@@ -137,7 +184,8 @@ def run():
                  ("application/x-rediwm-override", "override", None),
                  ("application/x-rediwm-noicon", "noicon", None),
                  ("application/pdf", "pdf", None),
-                 ("video/mp4", "mp4", None)]
+                 ("video/mp4", "mp4", None),
+                 ("text/x-shellscript", "sh", None)]
         xml = '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">'
         for mime_type, extension, icon in types:
             xml += f'<mime-type type="{mime_type}"><comment>Test model</comment><glob pattern="*.{extension}" weight="80"/>'
@@ -163,7 +211,7 @@ def run():
                 f'Name=Z Extra {i:02d}\nExec={launcher} extra-{i} %f\nTerminal=false\n')
         (apps / 'existing-link.desktop').write_text('[Desktop Entry]\nType=Application\n'
             'Name=Existing link handler\nExec=/usr/bin/true %U\nMimeType=x-scheme-handler/rediwm-existing-test;\n')
-        defaults = ["openscad", "openscad", "override", "missing", "", "celluloid"]
+        defaults = ["openscad", "openscad", "override", "missing", "", "celluloid", "openscad"]
         (config / "mimeapps.list").write_text('[Default Applications]\n' + ''.join(
             f'{t[0]}={app}.desktop;\n' for t, app in zip(types, defaults) if app) +
             'x-scheme-handler/file=thunar.desktop;\nx-scheme-handler/rediwm-existing-test=existing-link.desktop;\n')

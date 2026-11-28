@@ -39,10 +39,11 @@ static void place_scope(void) {
 
 int main(int argc, char **argv) {
     if (argc < 5) return 125;
-    /* scope, directory, shell/plugin (or --external + command argv) */
+    /* scope, directory, shell/plugin (or --external/--run + command argv) */
     int external = !strcmp(argv[3], "--external");
     if (!strcmp(argv[1], "1")) place_scope();
     if (chdir(argv[2])) { perror("Terminal directory"); return 125; }
+    if (!strcmp(argv[3], "--run")) { execv(argv[4], argv + 4); perror("Run file"); return 127; }
     if (external) { execvp(argv[4], argv + 4); perror("External terminal"); return 127; }
     if (setsid() < 0 || ioctl(STDIN_FILENO, TIOCSCTTY, 0) < 0) {
         perror("Terminal session"); return 125;
