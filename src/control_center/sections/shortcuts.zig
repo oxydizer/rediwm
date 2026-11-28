@@ -137,6 +137,7 @@ const InlineCommand = struct {
         entry.data.value = value;
         entry.data.cursor_pos = value.len;
         entry.data.selection_anchor = null;
+        entry.validation_error = null;
         if (entry.widget) |widget| {
             widget.kind.text_input = entry.data;
             widget.markDirty();
@@ -145,8 +146,10 @@ const InlineCommand = struct {
 
     fn changed(ctx: ?*anyopaque, _: usize, _: []const u8) void {
         const entry: *InlineCommand = @ptrCast(@alignCast(ctx orelse return));
+        const had_error = entry.validation_error != null;
         entry.validation_error = null;
         const cc = entry.control_center orelse return;
+        if (had_error) cc.refresh();
         if (cc.shortcut_autosave_timer) |timer| {
             timer.timerUpdate(2000) catch {};
         }
@@ -574,8 +577,9 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             const command = if (action == .custom_command)
                 commands.get(action.custom_command) orelse blk: {
                     for (s.inline_commands.items) |entry| {
-                        if ((entry.is_new or entry.isDirty()) and std.mem.eql(u8, entry.id, action.custom_command))
-                            break :blk @as([]const u8, "");
+                        if ((entry.is_new or entry.isDirty()) and
+                            std.mem.eql(u8, entry.id, action.custom_command))
+                            break :blk entry.current().value;
                     }
                     break :blk null;
                 }
