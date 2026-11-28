@@ -142,6 +142,21 @@ pub fn patchSlot(
     );
     if (!resolved.eql(assigned)) return error.InvalidSlotMetadata;
 
+    // Every chord outside this edit must retain its effective action.
+    // This also protects overflow bindings and explicit disables.
+    for (binds) |bind| {
+        const value = chord(bind);
+        if (previous != next and
+            (value == previous or value == next))
+            continue;
+
+        const before = slots.lookup(binds, value) orelse continue;
+        const after = slots.lookup(checked.activeKeybinds(), value);
+        if (after == null or
+            !keys.actionEql(before.action, after.?.action))
+            return error.InvalidSlotMetadata;
+    }
+
     return result;
 }
 
