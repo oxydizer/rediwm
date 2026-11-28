@@ -5,9 +5,7 @@
 namespace helper {
 
 void request_save(Transfer &t) {
-  if (t.handle.is_valid() &&
-      t.deletion_phase != DeletionPhase::waiting_disk &&
-      t.deletion_phase != DeletionPhase::ready) {
+  if (t.handle.is_valid() && !t.deleting()) {
     ++saves[t.id];
     t.handle.save_resume_data(lt::torrent_handle::save_info_dict);
   }
@@ -16,9 +14,13 @@ void finish_configuration(Transfer &t) {
   t.configuring = false;
   t.pending = false;
   t.requested_priorities.clear();
+  if (t.deleting()) {
+    t.start_after_priority = false;
+    return;
+  }
   t.handle.set_upload_limit(t.limit);
   t.handle.unset_flags(lt::torrent_flags::upload_mode);
-  if (!t.deleting() && t.start_after_priority) {
+  if (t.start_after_priority) {
     t.handle.resume();
     // Peers now, not at the next interval (minutes for a finished one).
     t.handle.force_reannounce(0, -1, lt::torrent_handle::ignore_min_interval);
@@ -53,6 +55,16 @@ void atomic_write(std::string const &path, std::string const &data) {
   close(fd);
   if (!ok || rename(tmp.c_str(), path.c_str()))
     throw std::runtime_error("Cannot save transfer state");
+  // The rename must survive a crash, not just the file contents.
+  auto parent = fs::path(path).parent_path();
+  int dir = open(parent.c_str(),
+                 O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (dir < 0)
+    throw std::runtime_error("Cannot open transfer state directory");
+  ok = fsync(dir) == 0;
+  close(dir);
+  if (!ok)
+    throw std::runtime_error("Cannot sync transfer state directory");
 }
 void persist(Transfer &t) {
   GKeyFile *key = g_key_file_new();
@@ -63,6 +75,8 @@ void persist(Transfer &t) {
   g_key_file_set_boolean(key, "transfer", "published", t.published);
   g_key_file_set_integer(key, "transfer", "ratio", t.ratio);
   g_key_file_set_integer(key, "transfer", "limit", t.limit);
+  g_key_file_set_integer(key, "transfer", "deletion_mode",
+                         static_cast<int>(t.deletion_mode));
   gsize n;
   char *data = g_key_file_to_data(key, &n, nullptr);
   try {
@@ -397,7 +411,22 @@ void restore() {
           g_key_file_get_boolean(key, "transfer", "published", nullptr);
       t.ratio = g_key_file_get_integer(key, "transfer", "ratio", nullptr);
       t.limit = g_key_file_get_integer(key, "transfer", "limit", nullptr);
+      auto deletion_mode =
+          g_key_file_get_integer(key, "transfer", "deletion_mode", nullptr);
       g_key_file_unref(key);
+      // Never attach an interrupted deletion to a new engine.
+      // Cleanup recovery will be implemented separately.
+      if (deletion_mode != 0) {
+        if (deletion_mode == static_cast<int>(DeletionMode::trash))
+          t.deletion_mode = DeletionMode::trash;
+        else if (deletion_mode == static_cast<int>(DeletionMode::permanent))
+          t.deletion_mode = DeletionMode::permanent;
+        t.deletion_phase = DeletionPhase::failed;
+        t.cached.flags |= lt::torrent_flags::paused;
+        t.error = "Torrent deletion interrupted; payload preserved";
+        transfers.insert_or_assign(id, std::move(t));
+        continue;
+      }
       auto path = state_dir + "/" + id + ".resume";
       if (!fs::exists(path) || fs::file_size(path) > 16 * 1024 * 1024)
         continue;

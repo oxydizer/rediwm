@@ -125,6 +125,12 @@ void advance_deletion(Transfer &t) {
   if (!t.handle.is_valid())
     throw std::runtime_error("Torrent handle unavailable for deletion");
 
+  if (t.deletion_mode == DeletionMode::none)
+    throw std::runtime_error("Missing torrent deletion mode");
+
+  // Commit intent before detaching the torrent.
+  persist(t);
+
   if (t.handle.status().flags & lt::torrent_flags::paused) {
     // An already paused torrent may not emit another pause alert.
     t.deletion_phase = DeletionPhase::waiting_flush;
@@ -265,7 +271,8 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
           t->handle.get_file_priorities() == t->requested_priorities) {
         finish_configuration(*t);
       }
-      if (t->pending && lt::alert_cast<lt::metadata_received_alert>(alert)) {
+      if (!t->deleting() && t->pending &&
+          lt::alert_cast<lt::metadata_received_alert>(alert)) {
         t->handle.pause();
         validate(*t->info());
         if (snapshot().size() > max_packet - 4096)
@@ -280,7 +287,11 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
         t->moving = false;
         t->storage_move_submitted = false;
         t->published = true;
-        if (!t->deleting() && t->resume_after_publish)
+        if (t->deleting()) {
+          t->resume_after_publish = false;
+          continue;
+        }
+        if (t->resume_after_publish)
           t->handle.resume();
         persist(*t);
         request_save(*t);
@@ -301,6 +312,10 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
         t->moving = false;
         t->storage_move_submitted = false;
         t->error = "Could not publish download: " + a->error.message();
+        if (t->deleting()) {
+          t->deletion_phase = DeletionPhase::failed;
+          continue;
+        }
         t->handle.pause();
         request_save(*t);
       }
