@@ -310,10 +310,11 @@ pub const Section = struct {
 
     pub fn autosaveInline(s: *Section, cc: *panel.ControlCenter) void {
         var saved = false;
+        var failure: ?[]const u8 = null;
         for (s.inline_commands.items) |entry| {
             if (!entry.isDirty()) continue;
             saveInlineCommand(cc, entry) catch |err| {
-                s.message = switch (err) {
+                failure = switch (err) {
                     error.InvalidCommand => i18n.tr("Invalid command"),
                     error.CommandChanged => i18n.tr("Command changed externally"),
                     else => i18n.tr("Could not save command"),
@@ -323,7 +324,12 @@ pub const Section = struct {
             saved = true;
             @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
         }
-        if (saved or s.message.len != 0) cc.refresh();
+        if (failure) |message| {
+            s.message = message;
+        } else if (saved) {
+            s.message = "";
+        }
+        if (saved or failure != null) cc.refresh();
     }
 
     pub fn focusedInlineId(s: *Section, focused: ?*W) ?[]const u8 {
