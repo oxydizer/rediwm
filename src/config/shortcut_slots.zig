@@ -109,6 +109,56 @@ pub fn parseEntry(
     try table.put(allocator, action, result);
 }
 
+/// Produce the same spelling accepted by parseEntry.
+pub fn encodeEntry(
+    a: std.mem.Allocator,
+    action: keys.Action,
+    slots: Slots,
+) ![]const u8 {
+    const action_buf = try a.alloc(u8, switch (action) {
+        .spawn => |v| v.len + 32,
+        .custom_command => |v| v.len + 32,
+        .save_layout => |v| v.len + 32,
+        .restore_layout => |v| v.len + 32,
+        else => 128,
+    });
+    defer a.free(action_buf);
+    const name = keys.describeAction(action, action_buf);
+    const encoded_name = try std.json.Stringify.valueAlloc(a, name, .{});
+    defer a.free(encoded_name);
+
+    const primary = try formatChord(a, slots.primary);
+    defer a.free(primary);
+    const alternate = try formatChord(a, slots.alternate);
+    defer a.free(alternate);
+
+    const encoded_slots = try std.json.Stringify.valueAlloc(
+        a,
+        [2][]const u8{ primary, alternate },
+        .{},
+    );
+    defer a.free(encoded_slots);
+    return std.fmt.allocPrint(a, "{s} = {s}", .{ encoded_name, encoded_slots });
+}
+
+fn formatChord(a: std.mem.Allocator, value: ?Chord) ![]const u8 {
+    const packed_chord = value orelse return a.dupe(u8, "");
+    const modifiers: keys.ModifierMask = @bitCast(@as(u32, @truncate(packed_chord >> 32)));
+    const symbol: @import("xkbcommon").Keysym = @enumFromInt(@as(u32, @truncate(packed_chord)));
+    var name: [128]u8 = undefined;
+    const n = xkb_keysym_get_name(@intFromEnum(symbol), &name, name.len);
+    if (n <= 0) return error.InvalidKeybind;
+    return std.fmt.allocPrint(a, "{s}{s}{s}{s}{s}", .{
+        if (modifiers.logo) "Super+" else "",
+        if (modifiers.ctrl) "Ctrl+" else "",
+        if (modifiers.alt) "Alt+" else "",
+        if (modifiers.shift) "Shift+" else "",
+        name[0..@intCast(n)],
+    });
+}
+
+extern fn xkb_keysym_get_name(u32, [*]u8, usize) c_int;
+
 pub fn chord(bind: keys.Keybind) Chord {
     return keys.pack(bind.modifiers, bind.sym);
 }
@@ -377,4 +427,26 @@ test "malformed and duplicate slot metadata is rejected" {
         error.DuplicateSlotAction,
         parseEntry(a, &table, "\"close_window\"", "[\"Super+q\", \"\"]"),
     );
+}
+
+test "encoded slot metadata round-trips with an empty primary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const spec = try keys.parseKeybind("Alt+F4");
+    const expected: Slots = .{
+        .primary = null,
+        .alternate = keys.pack(spec.modifiers, spec.sym),
+    };
+    const encoded = try encodeEntry(a, .close_window, expected);
+    const eq = std.mem.indexOfScalar(u8, encoded, '=') orelse unreachable;
+
+    var table: Table = .{};
+    try parseEntry(
+        a,
+        &table,
+        std.mem.trim(u8, encoded[0..eq], " \t"),
+        std.mem.trim(u8, encoded[eq + 1 ..], " \t"),
+    );
+    try std.testing.expect(expected.eql(table.get(.close_window).?));
 }
