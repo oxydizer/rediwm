@@ -7,6 +7,7 @@ const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const recent = @import("recent.zig");
+const app_hover = @import("app_hover.zig");
 const deletion = @import("../delete_dialog.zig");
 const header = @import("header.zig");
 const shell_ui = @import("ui").cairo;
@@ -42,11 +43,30 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     c.cairo_line_to(cr, width, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_stroke(cr);
     const in_repo = self.inRepository();
-    for ([_]bool{ false, true }) |content| {
-        if (content) self.renderToolbarHover(cr);
+    const relief_enabled = app_hover.toolbarReliefEnabled();
+    const Pass = enum { base, relief, content };
+    for ([_]Pass{ .base, .relief, .content }) |pass| {
+        var relief_layer: ?shell_ui.Layer = null;
+        if (pass == .relief) {
+            // Keep the moving chip below the button bevels and exterior shadows.
+            renderToolbarChip(self, cr);
+            if (!relief_enabled) continue;
+            relief_layer = shell_ui.Layer.beginVisible(cr, buttonBox(app_hover.toolbarReliefBounds(self))) orelse continue;
+        }
+        defer if (relief_layer) |*layer| layer.finish();
+        if (pass == .content) self.renderToolbarHover(cr);
         for (std.meta.tags(header.Action)) |action| {
             if (!self.toolbarButtonVisible(action)) continue;
-            const r = header.rect(self.w, in_repo, action);
+            const relieved = relief_enabled and app_hover.toolbarReliefAction(action);
+            if (pass != .content and relieved != (pass == .relief)) continue;
+            const bounds = buttonBox(header.rect(self.w, in_repo, action));
+            var button_layer: ?shell_ui.Layer = null;
+            const layer = if (relief_layer) |*shared| shared else blk: {
+                button_layer = shell_ui.Layer.beginVisible(cr, bounds) orelse continue;
+                break :blk &button_layer.?;
+            };
+            defer if (button_layer) |*individual| individual.finish();
+
             const enabled = self.toolbarButtonEnabled(action);
             const active = (action == .grid and !self.list_view) or (action == .list and self.list_view) or
                 (action == .filter and (self.folders_only or self.show_hidden or self.changedOnly())) or (action == .search and self.search_visible);
@@ -59,6 +79,7 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                     .type, .type_desc => tr("Type"),
                 } },
                 .filter => .{ .leading_icon = .filter, .label = tr("Filter") },
+                .grid, .list => .{ .icon = header.glyph(action), .icon_scale = 16.0 / 28.0, .label = @tagName(action) },
                 else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 16.0 / 28.0, .label = @tagName(action) },
             };
             if (opts.leading_icon != null) {
@@ -68,15 +89,15 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                 opts.alignment = .left;
                 opts.horizontal_padding = 10;
             }
-            var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse continue;
             const proximity = self.toolbarButtonProximity(action, self.mouse_x, self.mouse_y);
             const reach = ui_theme.global.border_glow_reach;
             const elevation = if (enabled and reach > 0 and proximity.distance < std.math.inf(f32))
                 std.math.clamp(1 - proximity.distance / reach, 0, 1)
             else
                 0;
+            const hovered = relieved and if (self.toolbar_surface.hovered) |target| target.id == @backingInt(action) else false;
             const state: ui_button.State = .{
-                .pointer = if (enabled) .idle else .disabled,
+                .pointer = if (!enabled) .disabled else if (hovered) .hover else .idle,
                 .selected = active,
                 // Glow is painted separately above the sliding chip.
                 .proximity_distance = std.math.inf(f32),
@@ -84,12 +105,11 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                 .proximity_y = proximity.y,
                 .hover_elevation = elevation,
             };
-            const box = layer.local();
-            if (content) {
+            const box: ui_button.Rect = .{ .x = bounds.x - layer.box.x, .y = bounds.y - layer.box.y, .w = bounds.w, .h = bounds.h };
+            if (pass == .content) {
                 const inset: f32 = if (opts.leading_icon != null) 4 else 0;
                 ui_button.paintContent(&layer.renderer, .{ .x = box.x, .y = box.y + inset, .w = box.w, .h = box.h - 2 * inset }, opts, state);
             } else ui_button.paintBackground(&layer.renderer, box, opts, state);
-            layer.finish();
         }
     }
     if (header.visible(self.w, in_repo, .git_view)) self.renderGitViewToggle(cr);
@@ -98,11 +118,15 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     self.renderLocationBar(cr, field.x, field.y, field.w, field.h);
 }
 
-pub fn renderToolbarHover(self: *App, cr: *c.cairo_t) void {
+fn buttonBox(rect: header.Rect) ui_button.Rect {
+    return .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) };
+}
+
+fn renderToolbarChip(self: *App, cr: *c.cairo_t) void {
     const hover = self.toolbar_hover;
     if (hover.opacity > 0) {
         const r = hover.frame;
-        if (shell_ui.Layer.begin(cr, .{ .x = r[0], .y = r[1], .w = r[2], .h = r[3] })) |value| {
+        if (shell_ui.Layer.beginVisible(cr, .{ .x = r[0], .y = r[1], .w = r[2], .h = r[3] })) |value| {
             var layer = value;
             var palette = layer.renderer.palette.?;
             palette.surface_hover[3] *= hover.opacity;
@@ -111,8 +135,10 @@ pub fn renderToolbarHover(self: *App, cr: *c.cairo_t) void {
             layer.finish();
         }
     }
+}
 
-    // The glow sits above the sliding chip but below the button ink.
+pub fn renderToolbarHover(self: *App, cr: *c.cairo_t) void {
+    // The glow sits above the backgrounds and below the button ink.
     if (!ui_theme.global.button_hover_glow_enabled) return;
     for (std.meta.tags(header.Action)) |action| {
         if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) continue;
@@ -120,12 +146,7 @@ pub fn renderToolbarHover(self: *App, cr: *c.cairo_t) void {
         const sample = self.toolbarButtonProximity(action, self.mouse_x, self.mouse_y);
         if (sample.distance >= std.math.inf(f32)) continue;
 
-        var layer = shell_ui.Layer.begin(cr, .{
-            .x = @floatCast(r.x),
-            .y = @floatCast(r.y),
-            .w = @floatCast(r.w),
-            .h = @floatCast(r.h),
-        }) orelse continue;
+        var layer = shell_ui.Layer.beginVisible(cr, buttonBox(r)) orelse continue;
         ui_button.paintBackground(&layer.renderer, layer.local(), .{ .variant = .ghost }, .{
             .proximity_distance = sample.distance,
             .proximity_x = sample.x,

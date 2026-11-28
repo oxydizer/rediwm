@@ -13,7 +13,7 @@ from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
 from desktop_zoom import wait_for
 
 
-def run(binaries, screenshots, baseline):
+def run(binaries, screenshots, baseline, toolbar_relief):
     with tempfile.TemporaryDirectory(prefix="rediwm-files-chrome-") as directory:
         tmp = Path(directory)
         home = tmp / "Home"
@@ -42,6 +42,11 @@ def run(binaries, screenshots, baseline):
         config = ('[compositor]\nxwayland = false\nfocus_zoom = "keep"\n'
                   '[desktop]\nenabled = false\n[animations]\nenabled = false\n'
                   '[theme]\nchrome_height = 46\n')
+        if toolbar_relief:
+            pressed = "flat" if toolbar_relief == "flat" else "inset"
+            config += (f'button_relief = "{toolbar_relief}"\nbutton_pressed_relief = "{pressed}"\n'
+                       'app_toolbar = "#808080"\nrelief_depth = 3\nrelief_softness = 3\n'
+                       'relief_light_angle = 90\nrelief_light = "#ffffff"\nrelief_dark = "#000000"\n')
         comp, log = spawn_compositor(tmp, config_content=config, binary=binaries / "rediwm",
                                      env_extra=isolated)
         env["REDIWM_CONFIG"] = str(tmp / "rediwm-config.toml")
@@ -96,17 +101,67 @@ def run(binaries, screenshots, baseline):
                     box = ipc.get_window_debug(wid)["client_box"]
                     return box["x"] + x, box["y"] + y
 
-                def shot(name):
-                    if screenshots is None:
-                        return
+                def capture(x, y, w, h):
                     ipc.wait_for_frame()
-                    win = find_window()
                     full = tmp / "shot.png"
                     full.unlink(missing_ok=True)
                     ipc.screenshot(path=str(full))
-                    x, y, w, h = (win[k] for k in ("x", "y", "width", "height"))
                     with Image.open(full) as image:
-                        image.crop((x, y, x + w, y + h)).save(screenshots / (name + ".png"))
+                        return image.crop((x, y, x + w, y + h))
+
+                def shot(name):
+                    if screenshots is None:
+                        return
+                    win = find_window()
+                    capture(*(win[k] for k in ("x", "y", "width", "height"))).save(screenshots / (name + ".png"))
+
+                def check_toolbar_relief():
+                    width = ipc.get_window_debug(wid)["client_box"]["width"]
+                    grid, listing, sort, filter_button = (width - offset for offset in (254, 224, 150, 51))
+                    new = 58
+                    # Coordinates in the crop start just after the navigation divider.
+                    def pixel(image, x, y):
+                        return image.getpixel((x, y - 42))
+
+                    def capture_when(predicate, message):
+                        def matching():
+                            image = capture(*local(0, 42), width, 39)
+                            return image if predicate(image) else None
+                        return wait_for(matching, message)
+
+                    def raised(image, raised_buttons, inset_buttons):
+                        blank = pixel(image, 400, 47)
+                        return (all(pixel(image, x, 47)[0] > blank[0] + 12 for x in raised_buttons)
+                                and all(pixel(image, x, 47) == blank for x in inset_buttons))
+
+                    def move_away():
+                        ipc.move_cursor(*local(500, 250))
+
+                    move_away()
+                    controls = (new, grid, listing, sort, filter_button)
+                    rest = capture_when(
+                        lambda image: raised(image, (new, listing, sort, filter_button), (grid,))
+                        if toolbar_relief == "raised" else raised(image, (), controls),
+                        "resting toolbar relief did not match the theme and selected view",
+                    )
+                    if screenshots:
+                        rest.save(screenshots / "toolbar-rest.png")
+                    if toolbar_relief == "raised":
+                        ipc.click_at(*local(listing, 62))
+                        move_away()
+                        capture_when(lambda image: raised(image, (grid,), (listing,)), "List did not take selected relief")
+                        ipc.click_at(*local(grid, 62))
+                        move_away()
+                        capture_when(lambda image: image.tobytes() == rest.tobytes(), "Grid did not restore selected relief")
+                    if toolbar_relief != "flat":
+                        # Outside the hit target, so the moving chip cannot account for the changed pixel.
+                        ipc.move_cursor(*local(new, 78))
+                        near = capture_when(lambda image: pixel(image, new, 80) != pixel(rest, new, 80),
+                                            "proximity elevation did not reach outside New")
+                        if screenshots:
+                            near.save(screenshots / "toolbar-proximity.png")
+                        move_away()
+                        capture_when(lambda image: image.tobytes() == rest.tobytes(), "toolbar kept stale hover pixels")
 
                 resize(962, 590)
                 wait_for(lambda: len(tabs()) == 1, "single tab did not publish")
@@ -122,6 +177,8 @@ def run(binaries, screenshots, baseline):
                     assert all(c["y"] + c["height"] == bar["height"] - 6 for c in controls), controls
                     assert all(b["x"] - a["x"] - a["width"] == 12 for a, b in zip(controls, controls[1:])), controls
                 shot("wide-single-grid")
+                if toolbar_relief and not baseline:
+                    check_toolbar_relief()
 
                 ipc.click_at(*local(141, 21))
                 title("Home")
@@ -199,8 +256,10 @@ if __name__ == "__main__":
     parser.add_argument("--binaries", type=Path, default=ROOT / "zig-out/bin")
     parser.add_argument("--screenshots", type=Path)
     parser.add_argument("--baseline", action="store_true", help="drive the upstream geometry")
+    parser.add_argument("--toolbar-relief", choices=("flat", "raised", "inset"),
+                        help="check toolbar pixels with the chosen relief style")
     args = parser.parse_args()
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)
-    run(args.binaries, args.screenshots, args.baseline)
+    run(args.binaries, args.screenshots, args.baseline, args.toolbar_relief)
     print("Files chrome checks passed")
