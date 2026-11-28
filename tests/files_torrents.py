@@ -32,6 +32,7 @@ class Client:
         self.socket.connect(str(runtime / 'files-transfers.sock'))
         self.socket.settimeout(.2)
         self.rows = []
+        self.snapshot_count = 0
         self.error = ''
         self.replies = {}
     def send(self, **args):
@@ -47,6 +48,7 @@ class Client:
             self.error = value['error']
         elif 'transfers' in value:
             self.rows = value['transfers']
+            self.snapshot_count += 1
         else:
             self.replies.update(value)
         return self.rows
@@ -284,7 +286,9 @@ def run():
             (state/f'{active_id}.resume').unlink(missing_ok=True)
             helper = launch(); client = Client(runtime)
             client.send(op='list')
-            client.until(lambda r: not r, 'active fixture cleared')
+            client.until(
+                lambda r: client.snapshot_count > 0 and not r,
+                'active fixture cleared')
 
             # A user-paused torrent takes the flush path directly.
             paused_dest = tmp/'delete-paused'
