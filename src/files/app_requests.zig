@@ -22,8 +22,8 @@ pub const Pending = union(enum) {
     create_folder,
     create_file,
     rename,
-    /// The window's own copy of the item's icon: the icon cache may evict
-    /// its raster before the reply arrives.
+    /// Owned copy of the item's icon, independent of the borrowed cache
+    /// raster. The pending request frees this copy when retired.
     properties: struct { preview: ?icons.Entry },
     toggle_permission: struct { path: []u8 },
     /// Opening the Trash place created its folder first.
