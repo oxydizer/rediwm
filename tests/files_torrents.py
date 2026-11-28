@@ -221,6 +221,106 @@ def run():
             assert not client.error, client.error
             client.send(op='remove',id=rows[0]['id']); client.until(lambda r:not r,'remove magnet again')
 
+            # Deleting an actively downloading torrent must stop writes,
+            # preserve the partial payload and retain verified progress.
+            active_dest = tmp/'delete-active'
+            active_dest.mkdir()
+            client.send(op='add', source=str(torrent_path),
+                        destination=str(active_dest))
+            rows = client.until(lambda r: r if r else None,
+                                'active deletion fixture')
+            active_id = rows[0]['id']
+            active_storage = Path(rows[0]['storage'])
+            client.send(op='start', id=active_id, files=[wanted],
+                        ratio=1, limit=131072)
+            rows = client.until(
+                lambda r: r if r and not r[0]['paused'] and
+                0 < r[0]['done'] < r[0]['total'] else None,
+                'partial active download', 50)
+            assert rows[0]['deletion_phase'] == 'none', rows
+            client.error = ''
+            client.send(op='probe_delete', id=active_id)
+            rows = client.until(
+                lambda r: r if r and r[0]['deletion_phase'] in
+                ('ready', 'failed') else None,
+                'active deletion disk barrier', 25)
+            assert rows[0]['deletion_phase'] == 'ready', rows
+            assert rows[0]['paused'], rows
+            client.send(op='files', id=active_id)
+            detail = client.reply('detail')
+            progress = {f['path']: f['done'] for f in detail['files']}
+            assert 0 < progress['bundle/wanted.bin'] < len(payload), detail
+            before = {
+                p.relative_to(active_storage): p.read_bytes()
+                for p in active_storage.rglob('*') if p.is_file()
+            }
+            assert before, 'active download produced no payload'
+            time.sleep(1)
+            after = {
+                p.relative_to(active_storage): p.read_bytes()
+                for p in active_storage.rglob('*') if p.is_file()
+            }
+            assert before == after, 'payload changed after disk barrier'
+            assert torrent_path.exists()
+            assert not client.error, client.error
+            print('PASS: active download deletion stops writes and preserves progress')
+
+            # Restart clears the test fixture from libtorrent but must not
+            # resurrect it. Remove its state files only after checking this.
+            client.close()
+            helper.kill(); helper.wait(timeout=5)
+            helper = launch(); client = Client(runtime)
+            rows = client.until(lambda r: r if r else None,
+                                'active deletion recovery')
+            assert rows[0]['id'] == active_id
+            assert rows[0]['deletion_phase'] == 'failed', rows
+            assert rows[0]['paused'], rows
+            assert active_storage.exists(), 'recovery removed partial data'
+            client.close()
+            helper.kill(); helper.wait(timeout=5)
+            state = tmp/'state/rediwm/transfers'
+            (state/f'{active_id}.ini').unlink()
+            (state/f'{active_id}.resume').unlink(missing_ok=True)
+            helper = launch(); client = Client(runtime)
+            assert not client.until(lambda r: r if r else True,
+                                    'active fixture cleared'), 'unexpected transfer'
+
+            # A user-paused torrent takes the flush path directly.
+            paused_dest = tmp/'delete-paused'
+            paused_dest.mkdir()
+            client.send(op='add', source=str(torrent_path),
+                        destination=str(paused_dest))
+            rows = client.until(lambda r: r if r else None,
+                                'paused deletion fixture')
+            paused_id = rows[0]['id']
+            paused_storage = Path(rows[0]['storage'])
+            client.send(op='start', id=paused_id, files=[wanted],
+                        ratio=1, limit=131072)
+            client.until(lambda r: r if r and not r[0]['paused'] and
+                         r[0]['done'] > 0 else None,
+                         'paused fixture starts downloading', 50)
+            client.send(op='pause', id=paused_id)
+            client.until(lambda r: r if r and r[0]['paused'] else None,
+                         'paused fixture stops')
+            client.error = ''
+            client.send(op='probe_delete', id=paused_id)
+            rows = client.until(
+                lambda r: r if r and r[0]['deletion_phase'] in
+                ('ready', 'failed') else None,
+                'paused deletion disk barrier')
+            assert rows[0]['deletion_phase'] == 'ready', rows
+            assert rows[0]['paused'], rows
+            assert paused_storage.exists()
+            assert torrent_path.exists()
+            assert not client.error, client.error
+            print('PASS: paused download deletion reaches disk barrier')
+
+            client.close()
+            helper.kill(); helper.wait(timeout=5)
+            (state/f'{paused_id}.ini').unlink()
+            (state/f'{paused_id}.resume').unlink(missing_ok=True)
+            helper = launch(); client = Client(runtime)
+
             # Exercise deletion without removing any payload.
             probe_dest = tmp/'delete-probe'
             probe_dest.mkdir()
