@@ -359,7 +359,11 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
             continue;
         }
 
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
+        const eq = (if (state.section == .shortcut_slots or
+            state.section == .workspace_shortcut_slots)
+            shortcut_slots.assignmentSeparator(line)
+        else
+            std.mem.indexOfScalar(u8, line, '=')) orelse {
             fail(path, line_no, "expected key = value", .{});
             return error.InvalidConfig;
         };

@@ -159,6 +159,118 @@ fn formatChord(a: std.mem.Allocator, value: ?Chord) ![]const u8 {
 
 extern fn xkb_keysym_get_name(u32, [*]u8, usize) c_int;
 
+/// Find the assignment separator, ignoring '=' inside quoted action names.
+pub fn assignmentSeparator(line: []const u8) ?usize {
+    var quoted = false;
+    var escaped = false;
+    for (line, 0..) |char, i| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quoted and char == '\\') {
+            escaped = true;
+        } else if (char == '"') {
+            quoted = !quoted;
+        } else if (char == '=' and !quoted) {
+            return i;
+        }
+    }
+    return null;
+}
+
+/// Edit only one action's metadata. `null` removes its entry.
+/// The caller may combine this result with binding edits before one rename.
+pub fn patch(
+    a: std.mem.Allocator,
+    original: []const u8,
+    action: keys.Action,
+    replacement: ?Slots,
+    workspace: bool,
+) ![]u8 {
+    const section = if (workspace)
+        "[shortcut_slots.workspace]"
+    else
+        "[shortcut_slots]";
+    const theme = @import("ui").theme;
+    const encoded = if (replacement) |slots|
+        try encodeEntry(a, action, slots)
+    else
+        null;
+    defer if (encoded) |entry| a.free(entry);
+
+    var scratch_arena = std.heap.ArenaAllocator.init(a);
+    defer scratch_arena.deinit();
+    const scratch = scratch_arena.allocator();
+
+    var in_section = false;
+    var section_body: ?usize = null;
+    var offset: usize = 0;
+    var lines = std.mem.splitScalar(u8, original, '\n');
+    while (lines.next()) |raw| {
+        const start = offset;
+        offset += raw.len + @as(usize, @intFromBool(lines.index != null));
+        const left = std.mem.trimStart(u8, raw, " \t");
+        const indent = raw.len - left.len;
+        const clean = theme.stripComment(std.mem.trimEnd(u8, left, " \t\r"));
+
+        if (std.mem.startsWith(u8, clean, "[")) {
+            in_section = std.mem.eql(u8, clean, section);
+            if (in_section and section_body == null)
+                section_body = offset;
+            continue;
+        }
+        if (!in_section) continue;
+
+        const eq = assignmentSeparator(clean) orelse continue;
+        const raw_key = std.mem.trim(u8, clean[0..eq], " \t");
+        const name = std.json.parseFromSliceLeaky(
+            []const u8,
+            scratch,
+            raw_key,
+            .{ .allocate = .alloc_always },
+        ) catch continue;
+        const current_action = keys.parseAction(name, scratch) catch continue;
+        if (!keys.actionEql(current_action, action)) continue;
+
+        if (encoded) |entry| {
+            return std.mem.concat(a, u8, &.{
+                original[0 .. start + indent],
+                entry,
+                original[start + indent + clean.len ..],
+            });
+        }
+
+        const tail = left[clean.len..];
+        if (std.mem.indexOfScalar(u8, tail, '#')) |hash| {
+            return std.mem.concat(a, u8, &.{
+                original[0 .. start + indent],
+                original[start + indent + clean.len + hash ..],
+            });
+        }
+        return std.mem.concat(a, u8, &.{
+            original[0..start],
+            original[offset..],
+        });
+    }
+
+    const entry = encoded orelse return a.dupe(u8, original);
+    const at = section_body orelse original.len;
+    const newline = if (at != 0 and original[at - 1] != '\n')
+        "\n"
+    else
+        "";
+    return std.mem.concat(a, u8, &.{
+        original[0..at],
+        newline,
+        if (section_body == null) section else "",
+        if (section_body == null) "\n" else "",
+        entry,
+        "\n",
+        original[at..],
+    });
+}
+
 pub fn chord(bind: keys.Keybind) Chord {
     return keys.pack(bind.modifiers, bind.sym);
 }
@@ -449,4 +561,71 @@ test "encoded slot metadata round-trips with an empty primary" {
         std.mem.trim(u8, encoded[eq + 1 ..], " \t"),
     );
     try std.testing.expect(expected.eql(table.get(.close_window).?));
+}
+
+test "slot metadata patch preserves other sections and comments" {
+    const a = std.testing.allocator;
+    const original =
+        "# retain\n" ++
+        "[shortcut_slots] # canvas\n" ++
+        "  \"close_window\" = [\"Super+q\", \"Alt+F4\"] # close\n" ++
+        "\"toggle_fullscreen\" = [\"Super+f\", \"\"]\n" ++
+        "[shortcut_slots.workspace]\n" ++
+        "\"close_window\" = [\"Super+c\", \"Alt+F4\"]\n" ++
+        "[input]\n" ++
+        "pointer_speed = 0.4\n";
+
+    const alternate = try binding("Alt+F4", .close_window);
+    const slots: Slots = .{ .alternate = chord(alternate) };
+    const edited = try patch(a, original, .close_window, slots, false);
+    defer a.free(edited);
+
+    try std.testing.expect(
+        std.mem.indexOf(u8, edited, "# close") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            edited,
+            "\"toggle_fullscreen\" = [\"Super+f\", \"\"]",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            edited,
+            "\"close_window\" = [\"Super+c\", \"Alt+F4\"]",
+        ) != null,
+    );
+    var cfg = try @import("loader.zig").parse(a, edited, "test");
+    defer cfg.deinit();
+    try std.testing.expect(slots.eql(cfg.shortcut_slots.get(.close_window).?));
+    try std.testing.expectEqual(@as(f32, 0.4), cfg.input.pointer_speed);
+
+    const removed = try patch(a, edited, .close_window, null, false);
+    defer a.free(removed);
+    var after = try @import("loader.zig").parse(a, removed, "test");
+    defer after.deinit();
+    try std.testing.expect(after.shortcut_slots.get(.close_window) == null);
+    try std.testing.expect(after.workspace_shortcut_slots.get(.close_window) != null);
+}
+
+test "slot metadata can be inserted without an existing section" {
+    const a = std.testing.allocator;
+    const original = "[input]\npointer_speed = 0.2\n";
+    const added = try patch(a, original, .close_window, .{}, false);
+    defer a.free(added);
+    var cfg = try @import("loader.zig").parse(a, added, "test");
+    defer cfg.deinit();
+    try std.testing.expect(cfg.shortcut_slots.get(.close_window).?.eql(.{}));
+    try std.testing.expectEqual(@as(f32, 0.2), cfg.input.pointer_speed);
+}
+
+test "assignment separator ignores equals inside quoted action names" {
+    const line = "\"spawn printf FOO=bar\" = [\"\", \"\"]";
+    const eq = assignmentSeparator(line).?;
+    try std.testing.expectEqualStrings(
+        "\"spawn printf FOO=bar\" ",
+        line[0..eq],
+    );
 }
