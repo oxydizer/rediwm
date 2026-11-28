@@ -535,6 +535,22 @@ pub fn saveCustomCommand(a: std.mem.Allocator, io: std.Io, cfg: *const loader.Co
     if (!snapshot.matches(&old)) return error.ConfigChanged;
     if (command == null and (!sameBindings(old.keybinds, cfg.keybinds) or
         !sameBindings(old.workspace_keybinds, cfg.workspace_keybinds))) return error.ConfigChanged;
+    if (command == null) {
+        const target: keys.Action = .{ .custom_command = id };
+        const old_canvas = old.shortcut_slots.get(target);
+        const expected_canvas = cfg.shortcut_slots.get(target);
+        const old_workspace = old.workspace_shortcut_slots.get(target);
+        const expected_workspace = cfg.workspace_shortcut_slots.get(target);
+        if ((old_canvas == null) != (expected_canvas == null) or
+            (old_workspace == null) != (expected_workspace == null))
+            return error.ConfigChanged;
+        if (old_canvas) |value| {
+            if (!value.eql(expected_canvas.?)) return error.ConfigChanged;
+        }
+        if (old_workspace) |value| {
+            if (!value.eql(expected_workspace.?)) return error.ConfigChanged;
+        }
+    }
 
     const result = try patchCustomCommand(scratch, original, &old, id, command);
     try writeConfig(a, io, path, result);
@@ -563,6 +579,8 @@ fn patchCustomCommand(a: std.mem.Allocator, original: []const u8, cfg: *const lo
             }
             if (changes.items.len != 0) patched = try patchBindings(a, patched, binds, changes.items, mode);
         }
+        patched = try slots.patch(a, patched, target, null, false);
+        patched = try slots.patch(a, patched, target, null, true);
     }
     return command_table.patch(a, patched, id, command);
 }
@@ -580,6 +598,172 @@ fn writeConfig(a: std.mem.Allocator, io: std.Io, path: []const u8, result: []con
     try file.writeStreamingAll(io, result);
     try file.sync(io);
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
+}
+
+test "custom command editing preserves slots and deletion removes them in both modes" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Ctrl+F11" = "custom_command demo"
+        \\"Ctrl+F12" = "custom_command demo"
+        \\"Super+q" = "close_window"
+        \\[keybinds.workspace]
+        \\"Ctrl+F10" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo original"
+        \\other = "echo keep"
+        \\[shortcut_slots]
+        \\"custom_command demo" = ["Ctrl+F11", "Ctrl+F12"]
+        \\"custom_command other" = ["", ""]
+        \\"close_window" = ["Super+q", ""]
+        \\[shortcut_slots.workspace]
+        \\"custom_command demo" = ["", "Ctrl+F10"]
+        \\"custom_command other" = ["", ""]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+
+    const target: keys.Action = .{ .custom_command = "demo" };
+    const other: keys.Action = .{ .custom_command = "other" };
+
+    try saveCustomCommand(a, io, &before, "demo", "echo edited");
+    const edited_text = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(edited_text);
+    var edited = try loader.parse(a, edited_text, path);
+    defer edited.deinit();
+
+    try std.testing.expectEqualStrings(
+        "echo edited", edited.shortcut_commands.get("demo").?,
+    );
+    try std.testing.expect(sameBindings(before.keybinds, edited.keybinds));
+    try std.testing.expect(sameBindings(
+        before.workspace_keybinds, edited.workspace_keybinds,
+    ));
+    try std.testing.expect(edited.shortcut_slots.get(target).?.eql(
+        before.shortcut_slots.get(target).?,
+    ));
+    try std.testing.expect(edited.workspace_shortcut_slots.get(target).?.eql(
+        before.workspace_shortcut_slots.get(target).?,
+    ));
+
+    try saveCustomCommand(a, io, &edited, "demo", null);
+    const deleted_text = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(deleted_text);
+    var deleted = try loader.parse(a, deleted_text, path);
+    defer deleted.deinit();
+
+    try std.testing.expect(!deleted.shortcut_commands.contains("demo"));
+    try std.testing.expect(deleted.shortcut_slots.get(target) == null);
+    try std.testing.expect(deleted.workspace_shortcut_slots.get(target) == null);
+    for (deleted.keybinds) |bind| {
+        try std.testing.expect(!keys.actionEql(bind.action, target));
+    }
+    for (deleted.workspace_keybinds) |bind| {
+        try std.testing.expect(!keys.actionEql(bind.action, target));
+    }
+
+    try std.testing.expectEqualStrings(
+        "echo keep", deleted.shortcut_commands.get("other").?,
+    );
+    try std.testing.expect(deleted.shortcut_slots.get(other).?.eql(
+        before.shortcut_slots.get(other).?,
+    ));
+    try std.testing.expect(deleted.workspace_shortcut_slots.get(other).?.eql(
+        before.workspace_shortcut_slots.get(other).?,
+    ));
+    try std.testing.expect(deleted.shortcut_slots.get(.close_window).?.eql(
+        before.shortcut_slots.get(.close_window).?,
+    ));
+    const close_key = try keys.parseKeybind("Super+q");
+    try std.testing.expect(slots.owns(
+        deleted.keybinds,
+        .close_window,
+        keys.pack(close_key.modifiers, close_key.sym),
+    ));
+
+    // An unassigned command still owns persistent empty slot metadata.
+    try saveCustomCommand(a, io, &deleted, "other", null);
+    const final_text = try std.Io.Dir.cwd().readFileAlloc(
+        io, path, a, .limited(1 << 20),
+    );
+    defer a.free(final_text);
+    var final = try loader.parse(a, final_text, path);
+    defer final.deinit();
+
+    try std.testing.expect(!final.shortcut_commands.contains("other"));
+    try std.testing.expect(final.shortcut_slots.get(other) == null);
+    try std.testing.expect(final.workspace_shortcut_slots.get(other) == null);
+    try std.testing.expect(sameBindings(deleted.keybinds, final.keybinds));
+    try std.testing.expect(sameBindings(
+        deleted.workspace_keybinds, final.workspace_keybinds,
+    ));
+}
+
+test "custom command deletion rejects stale slot metadata in either mode" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(
+        a, ".zig-cache/tmp/{s}/config.toml", .{tmp.sub_path},
+    );
+    defer a.free(path);
+
+    const original =
+        \\[keybinds]
+        \\"Ctrl+F11" = "custom_command demo"
+        \\[keybinds.workspace]
+        \\"Ctrl+F12" = "custom_command demo"
+        \\[shortcut_commands]
+        \\demo = "echo original"
+        \\[shortcut_slots]
+        \\"custom_command demo" = ["Ctrl+F11", ""]
+        \\[shortcut_slots.workspace]
+        \\"custom_command demo" = ["Ctrl+F12", ""]
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    var before = try loader.parse(a, original, path);
+    defer before.deinit();
+    const target: keys.Action = .{ .custom_command = "demo" };
+
+    for ([_]bool{ false, true }) |workspace| {
+        const table = if (workspace)
+            before.workspace_shortcut_slots
+        else
+            before.shortcut_slots;
+        const assigned = table.get(target).?;
+        const changed = try slots.patch(a, original, target, .{
+            .primary = null,
+            .alternate = assigned.primary,
+        }, workspace);
+        defer a.free(changed);
+
+        try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = changed });
+        try std.testing.expectError(
+            error.ConfigChanged,
+            saveCustomCommand(a, io, &before, "demo", null),
+        );
+        const actual = try std.Io.Dir.cwd().readFileAlloc(
+            io, path, a, .limited(1 << 20),
+        );
+        defer a.free(actual);
+        try std.testing.expectEqualStrings(changed, actual);
+    }
 }
 
 test "reset restores factory slot order without binding changes" {
