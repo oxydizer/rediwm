@@ -355,12 +355,16 @@ def ui_tests(tmp, home, env):
             box = ipc.get_window_debug(ident)['client_box']
             click(350, box['height'] - 55)
             command('sleep 30')
+            children = Path(f'/proc/{shell}/task/{shell}/children')
+            wait_for(lambda: children.read_text().strip(),
+                     'foreground command started before Ctrl+C')
             key(46, (29,))
             interrupted = home / 'interrupted'
             command('printf done > ' + shlex.quote(str(interrupted)))
             wait_for(lambda: interrupted.exists(), 'Ctrl+C interrupts foreground command')
             # The external action preserves desktop-entry argv and Files' cwd.
-            default_height = max(100, int((box['height'] - 26 - 112) / 3))
+            # Default Files chrome: 82px above content, 26px footer.
+            default_height = max(100, (box['height'] - 26 - 82) // 3)
             top = box['height'] - 26 - default_height
             click(box['width'] - 49, top + 16)
             wait_for(lambda: external_args.exists(), 'configured external terminal')
@@ -370,14 +374,25 @@ def ui_tests(tmp, home, env):
             if shutil.which('wl-copy') and shutil.which('wl-paste'):
                 clipboard_env = dict(env, WAYLAND_DISPLAY=display)
                 pasted = home / 'clipboard-pasted'
-                copy = subprocess.Popen(['wl-copy', '--foreground', '--paste-once'], stdin=subprocess.PIPE, env=clipboard_env)
+                copy = subprocess.Popen(['wl-copy', '--foreground', '--paste-once'], stdin=subprocess.PIPE,
+                                        env=clipboard_env)
                 procs.append(copy)
                 copy.stdin.write(('printf pasted > ' + shlex.quote(str(pasted))).encode())
                 copy.stdin.close()
                 # The terminal header action leaves keyboard focus in Files;
                 # take the terminal again before pasting.
                 click(350, box['height'] - 55)
-                time.sleep(.1)  # Wayland selection offer follows wl-copy startup.
+                def clipboard_ready():
+                    result = subprocess.run(
+                        ['wl-paste', '--list-types'],
+                        env=clipboard_env,
+                        capture_output=True,
+                        timeout=3,
+                    )
+                    return (result.returncode == 0 and
+                            b'text/plain;charset=utf-8' in result.stdout.splitlines())
+
+                wait_for(clipboard_ready, 'Wayland clipboard offer ready')
                 key(47, (29, 42))  # Ctrl+Shift+V.
                 copy.wait(timeout=5)
                 key(28)
@@ -437,7 +452,10 @@ def ui_tests(tmp, home, env):
             second_window = next(w for w in ipc.get_windows() if w['app_id'] == 'rediwm-files' and w['id'] != ident)
             ipc.focus_window(second_window['id'])
             ipc.wait_for('window_geometry_settled', window_id=second_window['id'])
-            assert not Path(f'/proc/{second.pid}/task/{second.pid}/children').read_text().strip()
+            # The second launcher forwards OpenWindow to the shared instance.
+            assert second_window['pid'] == first.pid
+            assert second.wait(timeout=4) == 0
+            assert int(pidfile.read_text()) == shell
             key(62)
             other_shell = wait_for(lambda: int(pidfile.read_text()) if pidfile.read_text() != str(shell) else None, 'independent terminal')
             assert other_shell != shell
@@ -457,21 +475,30 @@ def ui_tests(tmp, home, env):
             wait_for(session_members, 'foreground job started')
             key(62)
             # Close confirmation also covers the hidden terminal; cancellation preserves it.
+            def window_exists(window_id):
+                return any(w['id'] == window_id for w in ipc.get_windows())
+
             ipc.action('close_window', {'id': ident})
             time.sleep(.15)
-            assert first.poll() is None
+            assert window_exists(ident)
             key(1)
-            assert first.poll() is None and Path(f'/proc/{shell}').exists()
+            assert window_exists(ident)
+            assert Path(f'/proc/{shell}').exists()
+            assert session_members(), 'foreground job survives cancellation'
             ipc.action('close_window', {'id': ident})
             time.sleep(.15)
             key(28)
-            first.wait(timeout=4)
-            assert not Path(f'/proc/{shell}').exists(), 'shell reaped on close'
-            assert second.poll() is None and Path(f'/proc/{other_shell}').exists()
+            wait_for(lambda: not window_exists(ident), 'confirmed window closed')
+            wait_for(lambda: not Path(f'/proc/{shell}').exists(), 'shell reaped on close')
+            wait_for(lambda: not session_members(), 'foreground job terminated on close')
+            assert first.poll() is None
+            assert window_exists(second_window['id'])
+            assert Path(f'/proc/{other_shell}').exists()
             # Opened once and left alone: closing needs no confirmation.
             ipc.action('close_window', {'id': second_window['id']})
-            second.wait(timeout=4)
-            assert not Path(f'/proc/{other_shell}').exists(), 'idle shell hung up on close'
+            wait_for(lambda: not window_exists(second_window['id']), 'idle window closed')
+            wait_for(lambda: not Path(f'/proc/{other_shell}').exists(), 'idle shell hung up on close')
+            assert first.wait(timeout=4) == 0
         print('Files: F4/repeat, input, copy/paste, selection, external launch, following, divider/resize, idle, workspaces, minimize, independent windows and close/cancel and idle close', flush=True)
     except Exception:
         for path in tmp.glob('*.log'):
