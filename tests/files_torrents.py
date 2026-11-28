@@ -362,6 +362,9 @@ def run():
             probe_storage = Path(probe['storage'])
             marker = probe_storage/'preserve-me'
             marker.write_bytes(b'untouched')
+            existing = probe_storage/'bundle/wanted.bin'
+            existing.parent.mkdir(exist_ok=True)
+            existing.write_bytes(b'pre-existing data')
             client.error = ''
             client.send(op='probe_delete', id=probe_id)
             rows = client.until(
@@ -371,6 +374,14 @@ def run():
             assert rows[0]['deletion_phase'] == 'ready', rows
             assert rows[0]['paused'], rows
             assert marker.read_bytes() == b'untouched'
+            assert existing.read_bytes() == b'pre-existing data'
+            pending_manifest = configparser.ConfigParser()
+            pending_manifest.read(
+                state/f'{probe_id}.delete'
+            )
+            assert pending_manifest['deletion']['pending'] == 'true'
+            assert pending_manifest['deletion']['file_count'] == '0'
+            assert pending_manifest.sections() == ['deletion']
             assert torrent_path.exists()
             assert not client.error, client.error
             print('PASS: pending torrent deletion disk barrier')

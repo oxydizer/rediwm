@@ -96,9 +96,10 @@ void persist_deletion_manifest(Transfer &t) {
     throw std::runtime_error("Cannot manifest a detached torrent");
 
   auto info = t.handle.torrent_file();
-  if (!info)
+  if (!t.pending && !info)
     throw std::runtime_error("Torrent metadata unavailable for deletion");
-  validate(*info);
+  if (!t.pending)
+    validate(*info);
 
   auto storage = t.handle.status().save_path;
   if (storage.empty() || storage.front() != '/')
@@ -110,23 +111,29 @@ void persist_deletion_manifest(Transfer &t) {
     throw std::runtime_error("Unsafe torrent storage root");
 
   std::vector<int64_t> progress;
-  t.handle.file_progress(progress, lt::torrent_handle::piece_granularity);
-  auto priorities = t.handle.get_file_priorities();
+  std::vector<lt::download_priority_t> priorities;
+  if (!t.pending) {
+    t.handle.file_progress(progress, lt::torrent_handle::piece_granularity);
+    priorities = t.handle.get_file_priorities();
+  }
 
   GKeyFile *key = g_key_file_new();
   g_key_file_set_integer(key, "deletion", "version", 1);
   g_key_file_set_string(key, "deletion", "torrent_id", t.id.c_str());
   g_key_file_set_integer(key, "deletion", "mode",
                          static_cast<int>(t.deletion_mode));
+  g_key_file_set_boolean(key, "deletion", "pending", t.pending);
+  g_key_file_set_boolean(key, "deletion", "published", t.published);
   g_key_file_set_string(key, "deletion", "storage_root", storage.c_str());
   g_key_file_set_uint64(key, "deletion", "storage_device",
                         static_cast<guint64>(root_stat.st_dev));
   g_key_file_set_uint64(key, "deletion", "storage_inode",
                         static_cast<guint64>(root_stat.st_ino));
 
-  auto const &files = info->files();
   int count = 0;
-  for (auto index : files.file_range()) {
+  if (!t.pending) {
+    auto const &files = info->files();
+    for (auto index : files.file_range()) {
     if (files.pad_file_at(index))
       continue;
     auto i = size_t(int(index));
@@ -143,6 +150,7 @@ void persist_deletion_manifest(Transfer &t) {
         key, group.c_str(), "wanted",
         i < priorities.size() &&
             priorities[i] != lt::dont_download);
+    }
   }
   g_key_file_set_integer(key, "deletion", "file_count", count);
 
