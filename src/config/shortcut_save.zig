@@ -4,6 +4,7 @@ const std = @import("std");
 const loader = @import("loader.zig");
 const keys = @import("keybinds.zig");
 const command_table = @import("shortcut_command_table.zig");
+const slots = @import("shortcut_slots.zig");
 extern fn xkb_keysym_get_name(u32, [*]u8, usize) c_int;
 
 pub fn format(a: std.mem.Allocator, bind: keys.Keybind) ![]const u8 {
@@ -54,6 +55,171 @@ pub fn factoryConfig(a: std.mem.Allocator, mode: loader.DesktopMode) !loader.Con
     var config = try loader.parse(a, "", "shortcut-defaults");
     config.compositor.desktop_mode = mode;
     return config;
+}
+
+/// Change one slot while preserving the other slot and overflow bindings.
+/// Return a complete configuration without modifying the filesystem.
+pub fn patchSlot(
+    a: std.mem.Allocator,
+    original: []const u8,
+    cfg: *const loader.Config,
+    action: keys.Action,
+    slot: slots.Slot,
+    replacement: ?keys.Keybind,
+) ![]u8 {
+    if (action == .noop) return error.InvalidSlotMetadata;
+    if (action == .custom_command and
+        !cfg.shortcut_commands.contains(action.custom_command))
+        return error.ConfigChanged;
+
+    const mode = cfg.compositor.desktop_mode;
+    const binds = cfg.activeKeybinds();
+    var defaults = try factoryConfig(a, mode);
+    defer defaults.deinit();
+
+    var assigned = slots.resolve(
+        binds,
+        defaults.activeKeybinds(),
+        action,
+        cfg.storedShortcutSlots(action),
+    );
+    const previous = assigned.get(slot);
+    const next = if (replacement) |bind| slots.chord(bind) else null;
+
+    var changes: [2]keys.Keybind = undefined;
+    var count: usize = 0;
+
+    if (replacement) |bind| {
+        if (!keys.actionEql(bind.action, action))
+            return error.InvalidSlotMetadata;
+
+        if (next != previous) {
+            if (slots.lookup(binds, slots.chord(bind))) |owner| {
+                if (owner.action != .noop)
+                    return error.ShortcutConflict;
+            }
+            changes[count] = bind;
+            count += 1;
+        }
+    }
+
+    if (previous != next) {
+        if (previous) |value| {
+            var removal = slots.lookup(binds, value) orelse
+                return error.ConfigChanged;
+            removal.action = .noop;
+            changes[count] = removal;
+            count += 1;
+        }
+    }
+
+    assigned.set(slot, next);
+
+    const patched = if (count != 0)
+        try patchBindings(a, original, binds, changes[0..count], mode)
+    else
+        try a.dupe(u8, original);
+    defer a.free(patched);
+
+    const result = try slots.patch(
+        a,
+        patched,
+        action,
+        assigned,
+        mode.tiled(),
+    );
+    errdefer a.free(result);
+
+    var checked = try loader.parse(a, result, "shortcut-slot-edit");
+    defer checked.deinit();
+    checked.compositor.desktop_mode = mode;
+
+    const resolved = slots.resolve(
+        checked.activeKeybinds(),
+        defaults.activeKeybinds(),
+        action,
+        checked.storedShortcutSlots(action),
+    );
+    if (!resolved.eql(assigned)) return error.InvalidSlotMetadata;
+
+    return result;
+}
+
+test "clearing primary preserves alternate and overflow across reload" {
+    const a = std.testing.allocator;
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "close_window"
+        \\"Ctrl+F12" = "close_window"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", "Alt+F4"]
+        \\
+    ;
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    cfg.compositor.desktop_mode = .canvas;
+
+    const updated = try patchSlot(
+        a, original, &cfg, .close_window, .primary, null,
+    );
+    defer a.free(updated);
+
+    var parsed = try loader.parse(a, updated, "test");
+    defer parsed.deinit();
+    parsed.compositor.desktop_mode = .canvas;
+
+    const primary = try keys.parseKeybind("Super+q");
+    const alternate = try keys.parseKeybind("Alt+F4");
+    const overflow = try keys.parseKeybind("Ctrl+F12");
+    const stored = parsed.storedShortcutSlots(.close_window).?;
+
+    try std.testing.expect(stored.primary == null);
+    try std.testing.expectEqual(
+        @as(?slots.Chord, keys.pack(alternate.modifiers, alternate.sym)),
+        stored.alternate,
+    );
+    try std.testing.expect(!slots.owns(
+        parsed.activeKeybinds(), .close_window,
+        keys.pack(primary.modifiers, primary.sym),
+    ));
+    try std.testing.expect(slots.owns(
+        parsed.activeKeybinds(), .close_window,
+        keys.pack(alternate.modifiers, alternate.sym),
+    ));
+    try std.testing.expect(slots.isOverflow(
+        parsed.activeKeybinds(), .close_window, stored,
+        keys.pack(overflow.modifiers, overflow.sym),
+    ));
+}
+
+test "slot assignment rejects occupied chords" {
+    const a = std.testing.allocator;
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "close_window"
+        \\"Alt+F4" = "close_window"
+        \\"Ctrl+F12" = "close_window"
+        \\"Super+f" = "toggle_fullscreen"
+        \\[shortcut_slots]
+        \\"close_window" = ["Super+q", "Alt+F4"]
+        \\
+    ;
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    cfg.compositor.desktop_mode = .canvas;
+
+    for ([_][]const u8{ "Alt+F4", "Ctrl+F12", "Super+f" }) |name| {
+        const spec = try keys.parseKeybind(name);
+        try std.testing.expectError(
+            error.ShortcutConflict,
+            patchSlot(a, original, &cfg, .close_window, .primary, .{
+                .modifiers = spec.modifiers,
+                .sym = spec.sym,
+                .action = .close_window,
+            }),
+        );
+    }
 }
 
 fn selected(action: keys.Action, target: ?keys.Action) bool {
