@@ -321,7 +321,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
         }) });
         if (expanded and g == catalogue.group(.noop)) for (effective, labels) |bind, label| {
             const title = i18n.tr("Disabled shortcut.");
-            if (bind.action == .noop and !searching) try appendRow(s, cc, a, &rows, title, "", .{ .action = .noop, .mode = mode }, bind, label, false, false);
+            if (bind.action == .noop and (filter.text(title, "") or filter.binding(label))) try appendRow(s, cc, a, &rows, title, "", .{ .action = .noop, .mode = mode }, bind, label, false, false);
         };
         if (expanded) for (actions) |action| {
             if (catalogue.group(action) != g) continue;

@@ -21,6 +21,7 @@ def run():
             original += '"Super+F1" = "save_layout home"\n"Super+Ctrl+F1" = "restore_layout home"\n'
         custom = '"Alt+F11" = "spawn printf hello" # keep custom command'
         original += custom + "\n"
+        original += '"Alt+F9" = "noop"\n'
         env = {"DBUS_SESSION_BUS_ADDRESS": "", "HOME": str(tmp), "REDIWM_SHORTCUT_TEST": "two words"}
         config_path = tmp / "rediwm-config.toml"
         output_path = tmp / "shortcut-result"
@@ -86,6 +87,21 @@ def run():
                 assert has("Window Management") and has("Launcher")
                 assert has("Open System Monitor"), "existing shortcuts omitted System Monitor"
                 assert has("Ctrl+Alt+Delete")
+                for query in ("Alt+F9", "alt + f9", "disabled"):
+                    find_shortcut(query)
+                    assert has("Disabled shortcut.")
+                    assert has("Alt+F9")
+                    assert next(
+                        w for w in widgets() if w["label"] == "Alt+F9"
+                    )["is_disabled"]
+                find_shortcut("close")
+                assert not has("Alt+F9")
+                assert not has("Disabled shortcut.")
+                click("Clear shortcut search")
+                assert has("Window Management")
+                assert has("Launcher")
+                assert has("Open System Monitor")
+                assert not has("Clear shortcut search")
                 click("Window Management")
                 assert not has("Close Window")
                 for query in ("close", "WINDOW", "Super + Q"):
