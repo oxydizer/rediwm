@@ -619,7 +619,117 @@ def run_text_shortcut_priority():
     print(f"PASS: {mode} Settings text editing takes priority over conflicting shortcuts")
 
 
+def run_temporary_mode():
+    workspace = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+    persisted = "workspaces" if workspace else "canvas"
+    temporary = "canvas" if workspace else "workspaces"
+    original = (
+        f'[compositor]\ndesktop_mode = "{persisted}"\n'
+        '[keybinds]\n"Super+q" = "close_window"\n'
+        '[keybinds.workspace]\n"Super+q" = "close_window"\n'
+    )
+    with tempfile.TemporaryDirectory(prefix="rediwm-shortcut-mode-") as directory:
+        tmp = Path(directory)
+        path = tmp / "rediwm-config.toml"
+        process, log = spawn_compositor(
+            tmp, config_content=original,
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": ""},
+        )
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                def disk():
+                    return tomllib.loads(path.read_text())
+
+                def expect_mode(active, saved):
+                    rows = ipc.get_workspaces()
+                    if active == "canvas":
+                        assert rows[0]["name"] == "Canvas", rows
+                    else:
+                        assert rows[0]["layout"] == "split", rows
+                    assert disk()["compositor"]["desktop_mode"] == saved
+
+                def click(label):
+                    tree = ipc.get_widget_tree("control_center")["widgets"]
+                    widget = next(w for w in tree if label in (w["label"], w["name"]))
+                    box = widget["box"]
+                    panel = ipc.get_shell_state()["control_center"]["box"]
+                    ipc.click_at(round(panel["x"] + box["x"] + box["width"] / 2),
+                                 round(panel["y"] + box["y"] + box["height"] / 2))
+                    time.sleep(.15)
+
+                expect_mode(persisted, persisted)
+                ipc.action("set_desktop_mode", {"mode": temporary, "persist": False})
+                time.sleep(.3)
+                expect_mode(temporary, persisted)
+
+                ipc.open_control_center()
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                click("shortcut_search")
+                ipc.type_text("Close Window")
+                time.sleep(.15)
+                click("Super+q")
+                ipc.key(125, True)
+                ipc.key_press("F12")
+                ipc.key(125, False)
+                time.sleep(.15)
+                click("Save shortcut")
+                time.sleep(.6)
+                expect_mode(temporary, persisted)
+
+                bindings = disk()["keybinds"]
+                if temporary == "workspaces":
+                    assert bindings["workspace"]["Super+F12"] == "close_window"
+                    assert bindings["Super+q"] == "close_window"
+                else:
+                    assert bindings["Super+F12"] == "close_window"
+                    assert bindings["workspace"]["Super+q"] == "close_window"
+
+                # Explicit reload must also preserve the temporary mode.
+                ipc.reload_config()
+                time.sleep(.3)
+                expect_mode(temporary, persisted)
+
+                # An unrelated external write must not end the temporary mode.
+                path.write_text(path.read_text() + "\n# external edit\n")
+                time.sleep(.6)
+                expect_mode(temporary, persisted)
+
+                # A changed persisted preference must become the new baseline.
+                path.write_text(path.read_text().replace(
+                    f'desktop_mode = "{persisted}"',
+                    f'desktop_mode = "{temporary}"',
+                ))
+                ipc.reload_config()
+                time.sleep(.3)
+                expect_mode(temporary, temporary)
+
+                ipc.action("set_desktop_mode", {"mode": persisted, "persist": False})
+                ipc.reload_config()
+                time.sleep(.3)
+                expect_mode(persisted, temporary)
+
+                # Permanent selection updates both runtime and disk.
+                ipc.action("set_desktop_mode", {"mode": persisted, "persist": True})
+                time.sleep(.6)
+                expect_mode(persisted, persisted)
+
+                # A subsequent external mode change must take effect.
+                path.write_text(path.read_text().replace(
+                    f'desktop_mode = "{persisted}"',
+                    f'desktop_mode = "{temporary}"',
+                ))
+                ipc.reload_config()
+                time.sleep(.3)
+                expect_mode(temporary, temporary)
+        finally:
+            stop_process(process)
+            log.close()
+    print(f"PASS: temporary {temporary} mode survives shortcut saves and reloads")
+
+
 if __name__ == "__main__":
     run()
     run_reload_callbacks()
     run_text_shortcut_priority()
+    run_temporary_mode()

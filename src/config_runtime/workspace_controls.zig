@@ -5,7 +5,10 @@ const Server = @import("../Server.zig");
 const config = @import("config");
 const gpa = @import("../main.zig").gpa;
 pub fn mode(server: *Server, value: config.loader.DesktopMode, persist: bool) !void {
-    if (persist) try config.setting_save.saveCompositor(gpa, server.io, server.config.path, "desktop_mode", value);
+    if (persist) {
+        try config.setting_save.saveCompositor(gpa, server.io, server.config.path, "desktop_mode", value);
+        server.persisted_desktop_mode = value;
+    }
     server.config.compositor.desktop_mode = value;
     server.world.workspaces.setMode(server, value);
 }

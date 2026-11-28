@@ -213,6 +213,9 @@ argv: []const [*:0]const u8 = &.{},
 restart_requested: bool = false,
 theme_path: ?[]const u8 = null,
 config: config_loader.Config = undefined,
+/// Last desktop mode loaded from or successfully saved to disk.
+/// The active configuration may temporarily use a different mode.
+persisted_desktop_mode: config_loader.DesktopMode = .canvas,
 config_watcher: ?watcher_mod.ConfigWatcher = null,
 config_generation: u64 = 1,
 config_reload_error: ?[]const u8 = null,

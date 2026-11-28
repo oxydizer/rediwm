@@ -90,7 +90,16 @@ pub fn reloadConfig(server: *Server) void {
 
 /// Transfer ownership of a fully loaded configuration, including theme overlays.
 /// Display settings prepare this before committing so publication needs no fallible reload.
-pub fn applyLoadedConfig(server: *Server, new_cfg: loader.Config) void {
+pub fn applyLoadedConfig(server: *Server, loaded: loader.Config) void {
+    var new_cfg = loaded;
+    const persisted_mode = new_cfg.compositor.desktop_mode;
+    // Unrelated configuration writes must not end a temporary mode.
+    // An explicit change to the persisted mode still takes effect.
+    if (persisted_mode == server.persisted_desktop_mode) {
+        new_cfg.compositor.desktop_mode = server.config.compositor.desktop_mode;
+    }
+    server.persisted_desktop_mode = persisted_mode;
+
     if (server.input.open_control_center) |cc| {
         cc.shortcuts.cancelRecording();
         cc.refresh();

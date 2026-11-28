@@ -149,6 +149,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .argv = argv,
         .theme_path = theme_path,
         .config = loaded,
+        .persisted_desktop_mode = loaded.compositor.desktop_mode,
         .config_reload_error = config_load_error,
         .start_menu_catalog = catalog,
         .session = session,
