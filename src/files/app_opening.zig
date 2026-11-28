@@ -11,6 +11,62 @@ const image_formats = @import("../images/formats.zig");
 const theme = @import("../icon_theme.zig");
 const chooser_mod = @import("chooser.zig");
 const Editor = @import("editor.zig").Editor;
+const mime_db = @import("../mime_db.zig");
+const appimage = @import("appimage.zig");
+
+fn canRunItem(item: @import("app_model.zig").ViewItem) bool {
+    return !item.missing and !item.is_broken and !item.transfer_stub and !item.transfer_ghost and
+        item.mode & c.S_IFMT == c.S_IFREG and item.mode & 0o111 != 0 and
+        std.fs.path.isAbsolute(item.path);
+}
+
+pub fn selectedExecutable(self: *App) ?[]const u8 {
+    if (self.chooser != null or self.history.archive_len != 0 or self.history.torrent or self.trashReadOnly()) return null;
+    var selected: ?[]const u8 = null;
+    for (self.items.items) |item| {
+        if (!item.selected or item.transfer_ghost) continue;
+        if (selected != null or !canRunItem(item)) return null;
+        if (!appimage.candidate(item.name)) {
+            const mime = mime_db.guess(item.name);
+            if (!mime_db.isA(mime, "text/x-shellscript") and !mime_db.equals(mime, "application/x-fishscript")) return null;
+        }
+        selected = item.path;
+    }
+    return selected;
+}
+
+pub fn runSelected(self: *App) void {
+    const path = self.selectedExecutable() orelse {
+        self.setStatusNotice(tr("Could not run file"), true);
+        return;
+    };
+    runExecutable(self, path);
+}
+
+fn runExecutable(self: *App, path: []const u8) void {
+    const directory = std.fs.path.dirname(path) orelse "/";
+    var helper_buf: [platform.exe.max_path]u8 = undefined;
+    const argv: []const []const u8 = if (self.terminalScopes()) blk: {
+        const helper = self.terminalHelper("rediwm-files-terminal", &helper_buf) catch {
+            self.setStatusNotice(tr("Could not run file"), true);
+            return;
+        };
+        break :blk &.{ helper, "1", directory, "--run", path };
+    } else &.{path};
+    var child = std.process.spawn(self.io, .{
+        .argv = argv,
+        .cwd = .{ .path = directory },
+        .stdin = .ignore,
+    }) catch |err| {
+        std.log.warn("failed to run '{s}': {}", .{ path, err });
+        self.setStatusNotice(tr("Could not run file"), true);
+        return;
+    };
+    self.children.add(self.allocator, child.id.?) catch {
+        child.kill(self.io);
+        self.setStatusNotice(tr("Could not run file"), true);
+    };
+}
 
 pub fn addApplication(self: *App) void {
     const path = self.selectedAppImage() orelse return;
@@ -329,6 +385,21 @@ pub fn extractionFolderReady(self: *App) void {
     if (parsed.value.paths.len == 1 and std.fs.path.isAbsolute(parsed.value.paths[0])) {
         _ = @import("app_archives.zig").startExtraction(self, self.extract_picker_source.?, parsed.value.paths[0], self.extract_picker_members.items);
     }
+}
+
+pub fn canRunAppImage(self: *const App, item: @import("app_model.zig").ViewItem) bool {
+    return appimage.candidate(item.name) and canRunItem(item) and self.chooser == null and
+        self.history.archive_len == 0 and !self.history.torrent and !self.inTrash();
+}
+
+pub fn activateDoubleClick(self: *App, idx: usize) void {
+    if (idx >= self.items.items.len) return;
+    const item = self.items.items[idx];
+    if (self.canRunAppImage(item)) {
+        runExecutable(self, item.path);
+        return;
+    }
+    self.activateItem(idx);
 }
 
 pub fn activateItem(self: *App, idx: usize) void {

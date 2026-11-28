@@ -203,6 +203,7 @@ pub const App = struct {
     search: Editor = .{},
     search_visible: bool = false,
     menu: ?MenuKind = null,
+    menu_run_first: bool = false,
     menu_x: f64 = 0,
     menu_y: f64 = 0,
     menu_selected: usize = 0,
@@ -1024,6 +1025,8 @@ pub const App = struct {
 
     // app_opening.zig
     pub const addApplication = app_opening.addApplication;
+    pub const selectedExecutable = app_opening.selectedExecutable;
+    pub const runSelected = app_opening.runSelected;
     pub const previewSelected = app_opening.previewSelected;
     pub const launchEditor = app_opening.launchEditor;
     pub const launchPreview = app_opening.launchPreview;
@@ -1040,6 +1043,8 @@ pub const App = struct {
     pub const chooseExtractionFolder = app_opening.chooseExtractionFolder;
     pub const extractionFolderReady = app_opening.extractionFolderReady;
     pub const activateItem = app_opening.activateItem;
+    pub const activateDoubleClick = app_opening.activateDoubleClick;
+    pub const canRunAppImage = app_opening.canRunAppImage;
     pub const activateSelected = app_opening.activateSelected;
 
     // app_pointer.zig

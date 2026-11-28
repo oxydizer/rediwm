@@ -42,6 +42,7 @@ pub const PlaceAction = enum {
 };
 pub const FileAction = enum {
     open,
+    run,
     open_with,
     add_application,
     extract,
@@ -61,6 +62,7 @@ pub const FileAction = enum {
     pub fn label(self: FileAction) []const u8 {
         return switch (self) {
             .open => tr("Open"),
+            .run => tr("Run"),
             .open_with => tr("Open With…"),
             .add_application => tr("Add to applications"),
             .extract => tr("Extract"),
@@ -81,6 +83,7 @@ pub const FileAction = enum {
     pub fn icon(self: FileAction) IconId {
         return switch (self) {
             .open => .chevron_right,
+            .run => .play,
             .open_with => .grid,
             .add_application => .plus,
             .extract, .extract_to, .new_folder_from_selection => .folder,
